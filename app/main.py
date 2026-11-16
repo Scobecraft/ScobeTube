@@ -136,17 +136,26 @@ def _client_ip(request: Request) -> str:
 
 
 def _same_origin(request: Request) -> bool:
-    """Schutz vor CSRF: schreibende Anfragen müssen von unserer eigenen Seite kommen."""
+    """Schutz vor CSRF: schreibende Anfragen müssen von unserer eigenen Seite kommen.
+
+    1. Eigener Header X-ScobeTube: Browser senden ihn von fremden Seiten nie mit
+       (er erzwingt einen CORS-Preflight, den ScobeTube nie erlaubt).
+    2. Sec-Fetch-Site (vom Browser gesetzt) darf nicht „cross-site“/„same-site“ sein.
+    3. Nur bei älteren Browsern ohne Sec-Fetch-Site: Origin grob mit Host vergleichen –
+       tolerant gegenüber Reverse-Proxys und Port-Weiterleitungen.
+    """
     if request.headers.get("x-scobetube") != "1":
         return False
-    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
-        return False
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site in ("same-origin", "none")
     origin = request.headers.get("origin")
-    if origin:
-        host = request.headers.get("host", "")
-        if urlparse(origin).netloc.lower() != host.lower():
-            return False
-    return True
+    if not origin or origin == "null":
+        return True
+    origin_host = (urlparse(origin).hostname or "").lower()
+    candidates = {request.headers.get("host", ""), request.headers.get("x-forwarded-host", "")}
+    hosts = {(urlparse("//" + h.split(",")[0].strip()).hostname or "").lower() for h in candidates if h}
+    return origin_host in hosts
 
 
 @app.middleware("http")
@@ -343,8 +352,10 @@ async def auth_login_code(request: Request):
 
 def _rp(request: Request) -> tuple[str, str]:
     """Relying-Party-ID und Origin für Passkeys (überschreibbar per Umgebungsvariable)."""
-    rp_id = os.environ.get("WEBAUTHN_RP_ID") or (request.url.hostname or "localhost")
-    origin = os.environ.get("WEBAUTHN_ORIGIN") or f"{request.url.scheme}://{request.url.netloc}"
+    # Adresse aus Sicht des Browsers (Origin-Header) – funktioniert auch hinter Reverse-Proxys
+    browser_origin = request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+    rp_id = os.environ.get("WEBAUTHN_RP_ID") or (urlparse(browser_origin).hostname or "localhost")
+    origin = os.environ.get("WEBAUTHN_ORIGIN") or browser_origin
     return rp_id, origin
 
 
