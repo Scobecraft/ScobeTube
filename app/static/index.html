@@ -7,9 +7,7 @@
   <meta name="theme-color" content="#0b0b0c">
   <link rel="icon" href="static/icon.svg" type="image/svg+xml" id="favicon">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/fonts/fonts.css">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body data-source="all" data-kind="video">
@@ -39,6 +37,7 @@
             <div class="who"><span class="label" id="userRole">Benutzer</span><b id="userMenuName"></b>
               <div class="my-stats" id="myStats"></div></div>
             <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte</button>
+            <button id="menuSecurity"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Zwei-Faktor-Login <span class="pill" id="menu2fa">aus</span></button>
             <button id="menuPassword"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Passwort ändern</button>
             <button id="menuLogout"><svg viewBox="0 0 24 24"><path d="M15 4h5v16h-5M10 8l-4 4 4 4M6 12h11"/></svg>Abmelden</button>
           </div>
@@ -105,6 +104,8 @@
         <div class="toggles">
           <label class="toggle"><input type="checkbox" id="optPlaylist"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="playlistLabel">Ganze Playlist</span></label>
           <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Cover &amp; Metadaten</label>
+          <label class="toggle yt-only" title="Werbung, Eigenwerbung, Intros, Outros und „Abonnieren“-Erinnerungen aus YouTube-Videos herausschneiden (Daten von SponsorBlock)"><input type="checkbox" id="optSponsor"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>SponsorBlock</label>
+          <label class="toggle" title="Videos mit Kapiteln (z. B. Mixe, Alben, Hörbücher) in einzelne Dateien zerlegen"><input type="checkbox" id="optChapters"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Kapitel aufteilen</label>
           <label class="toggle"><input type="checkbox" id="optCut"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>✂ Zuschneiden</label>
           <label class="toggle video-only yt-only"><input type="checkbox" id="optSubs"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Untertitel</label>
         </div>
@@ -181,7 +182,7 @@
     </section>
 
     <footer class="foot">
-      <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span></span>
+      <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span> · <a class="foot-link" href="rechtliches">Rechtliches</a> · Nur private Nutzung</span>
       <span class="foot-info">
         <span id="retentionInfo" hidden title="Alle heruntergeladenen Dateien werden automatisch vom Server gelöscht">🗑 Auto-Löschung nach <b id="retentionHours">10</b> Std.</span>
         <span id="uptimeInfo" title="">⏱ Uptime <b id="uptime">…</b></span>
@@ -261,6 +262,73 @@
         <div class="form-msg" id="pwMsg"></div>
         <p class="label">Alle anderen Geräte werden danach abgemeldet.</p>
         <div><button class="btn accent" type="submit">Speichern</button></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Sicherheit / 2FA -->
+  <div class="modal" id="secModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card wide" role="dialog" aria-labelledby="secTitle">
+      <div class="modal-head"><h2 id="secTitle">Zwei-Faktor-Login</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <p class="sec-intro">Nach dem Passwort wird zusätzlich ein zweiter Nachweis verlangt. Selbst mit gestohlenem Passwort kommt dann niemand in dein Konto.</p>
+
+      <div class="sec-block" id="secTotp">
+        <div class="sec-row">
+          <div class="sec-icon">⌚</div>
+          <div class="txt"><h4>Authenticator-App <span class="pill" id="totpPill">aus</span></h4>
+            <p>Google Authenticator, Microsoft Authenticator, Aegis, 2FAS … zeigt alle 30 Sekunden einen neuen 6-stelligen Code.</p></div>
+          <div class="acts"><button class="btn accent small" id="totpStart">Einrichten</button><button class="btn ghost small" id="totpOff" hidden>Deaktivieren</button></div>
+        </div>
+        <div class="totp-setup" id="totpSetup" hidden>
+          <img class="qr" id="totpQr" alt="QR-Code für die Authenticator-App">
+          <div class="form">
+            <p><b>1.</b> QR-Code mit der App scannen – oder den Schlüssel von Hand eintragen:</p>
+            <code class="secret" id="totpSecret"></code>
+            <p><b>2.</b> Den angezeigten 6-stelligen Code eingeben:</p>
+            <input class="input code-input mono" id="totpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456">
+            <div class="form-msg" id="totpMsg"></div>
+            <div><button class="btn accent" id="totpEnable">Aktivieren</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec-block" id="secPasskey">
+        <div class="sec-row">
+          <div class="sec-icon">🔑</div>
+          <div class="txt"><h4>Passkeys <span class="pill" id="pkPill">0</span></h4>
+            <p>Mit Fingerabdruck, Gesicht oder Bildschirmsperre bestätigen, zum Beispiel über den Google-Passwortmanager, Android, iPhone, Windows Hello oder einen USB-Sicherheitsschlüssel.</p></div>
+          <div class="acts"><button class="btn accent small" id="pkAdd">+ Passkey</button></div>
+        </div>
+        <p class="warn-box" id="pkInsecure" hidden>⚠ Passkeys gehen nur über <b>HTTPS</b>. Du hast ScobeTube gerade über unverschlüsseltes HTTP geöffnet, deshalb blockiert der Browser sie. Richte HTTPS über einen Reverse-Proxy ein (z. B. Nginx Proxy Manager oder Caddy). Bis dahin funktioniert die Authenticator-App.</p>
+        <div class="pk-list" id="pkList"></div>
+      </div>
+
+      <div class="sec-block" id="secRecovery" hidden>
+        <div class="sec-row">
+          <div class="sec-icon">🛟</div>
+          <div class="txt"><h4>Wiederherstellungscodes <span class="pill" id="recPill">0 übrig</span></h4>
+            <p>Falls du Handy oder Passkey verlierst. Jeder Code funktioniert nur einmal.</p></div>
+          <div class="acts"><button class="btn ghost small" id="recNew">Neue Codes</button></div>
+        </div>
+        <div class="rec-codes" id="recCodes" hidden>
+          <p><b>Jetzt sichern!</b> Diese Codes werden nur dieses eine Mal angezeigt.</p>
+          <div class="rec-grid mono" id="recGrid"></div>
+          <div class="acts"><button class="btn small" id="recCopy">Kopieren</button><button class="btn ghost small" id="recSave">Als Datei speichern</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Passwort bestätigen -->
+  <div class="modal" id="confirmModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="confirmTitle">
+      <div class="modal-head"><h2 id="confirmTitle">Bestätigen</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <form class="form" id="confirmForm">
+        <p id="confirmText"></p>
+        <label class="field"><span class="label">Dein Passwort</span><input class="input" type="password" id="confirmPw" autocomplete="current-password" required></label>
+        <div><button class="btn accent" type="submit">Bestätigen</button></div>
       </form>
     </div>
   </div>
@@ -345,7 +413,7 @@
         <span class="dur"></span>
       </div>
       <div class="body">
-        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
+        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag chap"></span><span class="tag sb"></span><span class="tag kept"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
         <h3 class="title"></h3>
         <div class="sub"></div>
         <div class="cells"></div>
@@ -354,6 +422,7 @@
       </div>
       <div class="actions">
         <button class="act play" title="Abspielen"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+        <button class="act pin" title="Behalten (keine Auto-Löschung)"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4zM12 13v8"/></svg></button>
         <button class="act edit" title="Titel, Interpret &amp; Cover bearbeiten"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
         <a class="act open" title="Originalseite öffnen" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg></a>
         <a class="act primary dl" title="Herunterladen" download><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg></a>
@@ -366,6 +435,8 @@
     </article>
   </template>
 
+  <script src="static/webauthn.js"></script>
   <script src="static/app.js"></script>
+  <script src="static/eggs.js"></script>
 </body>
 </html>

@@ -54,4 +54,8 @@ try:
 except json.JSONDecodeError:
     YTDL_EXTRA_OPTIONS = {}
 
+# Optionale Betreiberangaben für die Seite „Rechtliches“
+OPERATOR_NAME = os.environ.get("OPERATOR_NAME", "").strip()[:200]
+OPERATOR_CONTACT = os.environ.get("OPERATOR_CONTACT", "").strip()[:200]
+
 APP_VERSION = "1.0.0"

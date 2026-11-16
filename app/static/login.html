@@ -7,9 +7,7 @@
   <title>Anmelden – ScobeTube</title>
   <meta name="theme-color" content="#0b0b0c">
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/fonts/fonts.css">
   <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
@@ -48,10 +46,30 @@
           <div class="form-msg" id="msg" role="alert"></div>
           <button class="go" type="submit" id="submit"><span class="go-text" id="submitText">Rein da</span><svg viewBox="0 0 24 24"><path d="M5 12h13m0 0-5-5m5 5-5 5"/></svg></button>
         </form>
+        <div class="step2" id="step2" hidden>
+          <button class="btn accent passkey-btn" type="button" id="pkLogin" hidden><span class="key">🔑</span>Mit Passkey bestätigen</button>
+          <p class="caps show" id="pkInsecure" hidden>Passkeys gehen nur über HTTPS. Bitte den Code aus der Authenticator-App oder einen Wiederherstellungscode nutzen.</p>
+          <div class="or" id="orLine" hidden>oder</div>
+          <form class="form" id="codeForm" autocomplete="off">
+            <label class="field"><span class="label" id="codeLabel">Code aus der Authenticator-App</span>
+              <input class="input code-input mono" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="11" placeholder="123456"></label>
+            <div class="form-msg" id="msg2" role="alert"></div>
+            <button class="go" type="submit" id="codeSubmit"><span class="go-text">Bestätigen</span><svg viewBox="0 0 24 24"><path d="M5 12h13m0 0-5-5m5 5-5 5"/></svg></button>
+          </form>
+          <p class="mt"><button type="button" class="linkish" id="useRecovery">Wiederherstellungscode verwenden</button> · <button type="button" class="linkish" id="backBtn">Zurück</button></p>
+        </div>
+        <div class="login-legal">
+          <b>🔒 Private Instanz</b> – nur für Personen, die vom Betreiber eingeladen wurden. Kein öffentliches oder kommerzielles Angebot.
+          Mit der Anmeldung bestätigst du, nur Inhalte herunterzuladen, zu denen du berechtigt bist (z. B. eigene, freie oder als Privatkopie erlaubte Inhalte), sie nicht weiterzugeben und die
+          <a href="rechtliches#nutzung">Nutzungsbedingungen</a> sowie die <a href="rechtliches#datenschutz">Datenschutzhinweise</a> zu akzeptieren.
+          Es wird nur ein technisch notwendiges Cookie gesetzt.
+        </div>
         <div class="secure-note"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Passwörter werden nur als scrypt-Hash gespeichert.</span></div>
       </div>
     </section>
   </main>
+  <script src="static/webauthn.js"></script>
   <script src="static/login.js"></script>
+  <script src="static/eggs.js"></script>
 </body>
 </html>

@@ -1,0 +1,8 @@
+Die Schriften in diesem Ordner stehen unter der SIL Open Font License 1.1
+(https://openfontlicense.org) und werden hier unverändert mitgeliefert:
+
+- Unbounded       – Copyright The Unbounded Project Authors
+- Space Grotesk   – Copyright The Space Grotesk Project Authors
+- JetBrains Mono  – Copyright The JetBrains Mono Project Authors
+
+Sie werden lokal ausgeliefert, damit beim Aufruf von ScobeTube keine Daten an Google übertragen werden.

@@ -24,6 +24,7 @@ PERMISSIONS: dict[str, str] = {
     "files": "Fertige Dateien herunterladen",
     "delete": "Eigene Einträge & Dateien löschen",
     "view_all": "Downloads aller Benutzer sehen & verwalten",
+    "keep": "Downloads dauerhaft behalten (📌 – keine Auto-Löschung)",
     "storage": "Speicher leeren (alle Downloads löschen)",
     "settings": "Einstellungen (yt-dlp-Update, Cookies, Systemmonitor)",
     "admin": "Administrator (alle Rechte + Benutzerverwaltung)",
@@ -96,6 +97,15 @@ class User:
     disabled: bool = False
     created: float = field(default_factory=time.time)
     last_login: float | None = None
+    # Zwei-Faktor-Login
+    totp_secret: str | None = None
+    totp_last_step: int = 0
+    recovery_codes: list[str] = field(default_factory=list)   # sha256-Hashes
+    passkeys: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def twofa(self) -> bool:
+        return bool(self.totp_secret or self.passkeys)
 
     def has(self, perm: str) -> bool:
         if self.disabled:
@@ -111,7 +121,9 @@ class User:
 
     def public(self) -> dict[str, Any]:
         return {"username": self.username, "permissions": self.permissions, "disabled": self.disabled,
-                "created": self.created, "last_login": self.last_login, "admin": self.is_admin}
+                "created": self.created, "last_login": self.last_login, "admin": self.is_admin,
+                "twofa": self.twofa, "totp": bool(self.totp_secret), "passkeys": len(self.passkeys),
+                "recovery_left": len(self.recovery_codes)}
 
 
 @dataclass
@@ -335,5 +347,102 @@ class LoginLimiter:
             self.fails.pop(f"a:{ip}:{username.lower()}", None)
 
 
+# ------------------------------------------------------------ totp (rfc 6238)
+TOTP_STEP = 30
+TOTP_DIGITS = 6
+
+
+def new_totp_secret() -> str:
+    return base64.b32encode(secrets.token_bytes(20)).decode().rstrip("=")
+
+
+def _totp_at(secret: str, step: int) -> str:
+    key = base64.b32decode(secret + "=" * (-len(secret) % 8), casefold=True)
+    digest = hmac.new(key, step.to_bytes(8, "big"), hashlib.sha1).digest()
+    off = digest[-1] & 0x0F
+    code = (int.from_bytes(digest[off:off + 4], "big") & 0x7FFFFFFF) % (10 ** TOTP_DIGITS)
+    return str(code).zfill(TOTP_DIGITS)
+
+
+def totp_match(secret: str, code: str, last_step: int = 0) -> int | None:
+    """Prüft einen Code (±1 Zeitfenster). Gibt den Zeitschritt zurück oder None.
+
+    Bereits benutzte Zeitschritte werden abgelehnt (Schutz gegen Wiederverwendung)."""
+    code = re.sub(r"\s", "", code or "")
+    if not re.fullmatch(r"\d{6}", code):
+        return None
+    now = int(time.time()) // TOTP_STEP
+    for step in (now, now - 1, now + 1):
+        if step > last_step and hmac.compare_digest(_totp_at(secret, step), code):
+            return step
+    return None
+
+
+def totp_uri(secret: str, username: str, issuer: str = "ScobeTube") -> str:
+    from urllib.parse import quote
+    return (f"otpauth://totp/{quote(issuer)}:{quote(username)}?secret={secret}&issuer={quote(issuer)}"
+            f"&algorithm=SHA1&digits={TOTP_DIGITS}&period={TOTP_STEP}")
+
+
+def new_recovery_codes(n: int = 8) -> tuple[list[str], list[str]]:
+    """Gibt (Klartext-Codes zum einmaligen Anzeigen, Hashes zum Speichern) zurück."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    plain = ["-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(2)) for _ in range(n)]
+    return plain, [hashlib.sha256(c.encode()).hexdigest() for c in plain]
+
+
+def use_recovery_code(user: User, code: str) -> bool:
+    norm = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+    if len(norm) != 8:
+        return False
+    h = hashlib.sha256(f"{norm[:4]}-{norm[4:]}".encode()).hexdigest()
+    for stored in list(user.recovery_codes):
+        if hmac.compare_digest(stored, h):
+            user.recovery_codes.remove(stored)
+            return True
+    return False
+
+
+# --------------------------------------------- tickets für den 2. schritt
+@dataclass
+class LoginTicket:
+    username: str
+    remember: bool
+    ip: str
+    expires: float
+    attempts: int = 0
+    challenge: bytes | None = None   # für Passkeys
+
+
+class TicketStore:
+    TTL = 5 * 60
+    MAX_ATTEMPTS = 5
+
+    def __init__(self) -> None:
+        self.tickets: dict[str, LoginTicket] = {}
+        self.lock = threading.Lock()
+
+    def create(self, username: str, remember: bool, ip: str) -> str:
+        token = secrets.token_urlsafe(32)
+        with self.lock:
+            now = time.time()
+            for k in [k for k, t in self.tickets.items() if t.expires < now]:
+                del self.tickets[k]
+            self.tickets[token] = LoginTicket(username, remember, ip, now + self.TTL)
+        return token
+
+    def get(self, token: str, ip: str) -> LoginTicket | None:
+        with self.lock:
+            t = self.tickets.get(token or "")
+            if not t or t.expires < time.time() or t.ip != ip or t.attempts >= self.MAX_ATTEMPTS:
+                return None
+            return t
+
+    def consume(self, token: str) -> None:
+        with self.lock:
+            self.tickets.pop(token, None)
+
+
 users = UserStore()
+tickets = TicketStore()
 limiter = LoginLimiter()

@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import yt_dlp
+from yt_dlp.postprocessor.ffmpeg import FFmpegSplitChaptersPP
 from yt_dlp.utils import DownloadCancelled, download_range_func
 
-from . import config, spotify
+from . import config, imgproxy, spotify, tags
 
 log = logging.getLogger("scobetube")
 
@@ -38,6 +39,8 @@ class Options:
     playlist: bool = False
     subtitles: bool = False
     thumbnail: bool = True
+    sponsorblock: bool = False   # Werbung/Intros aus YouTube-Videos herausschneiden
+    chapters: bool = False       # anhand der Kapitel in einzelne Dateien aufteilen
     start: float | None = None   # Zuschnitt in Sekunden
     end: float | None = None
 
@@ -64,6 +67,8 @@ class Options:
             playlist=bool(data.get("playlist", False)),
             subtitles=bool(data.get("subtitles", False)),
             thumbnail=bool(data.get("thumbnail", True)),
+            sponsorblock=bool(data.get("sponsorblock", False)),
+            chapters=bool(data.get("chapters", False)),
             **_parse_cut(data.get("start"), data.get("end")),
         )
 
@@ -129,10 +134,13 @@ class Item:
     note: str | None = None       # kurzer Hinweis zum aktuellen Schritt
     spotify: dict[str, Any] | None = None   # Spotify-Metadaten (Titel, Interpreten, Album, Cover …)
     match_url: str | None = None  # gefundener Song auf YouTube Music
+    keep: bool = False            # 📌 von der Auto-Löschung ausnehmen
+    chapter: dict[str, Any] | None = None   # gesetzt, wenn dies ein Kapitel eines größeren Downloads ist
 
     def public(self) -> dict[str, Any]:
         d = asdict(self)
         d["title"] = self.title or self.url
+        d["thumbnail"] = imgproxy.wrap(self.thumbnail)   # Bilder über den Server laden (Datenschutz)
         return d
 
     @classmethod
@@ -308,6 +316,11 @@ class Manager:
                 opts["subtitleslangs"] = ["de.*", "en.*", "de", "en"]
                 pps.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
 
+        if o.sponsorblock:
+            # Segmente von sponsor.ajay.app holen und herausschneiden (nur YouTube)
+            pps.insert(0, {"key": "SponsorBlock", "categories": list(SPONSOR_CATEGORIES), "when": "after_filter"})
+            pps.append({"key": "ModifyChapters", "remove_sponsor_segments": set(SPONSOR_CATEGORIES),
+                        "force_keyframes": False})
         pps.append({"key": "FFmpegMetadata", "add_metadata": True, "add_chapters": True})
         if o.thumbnail and thumb_ok:
             opts["writethumbnail"] = True
@@ -328,6 +341,9 @@ class Manager:
             # Kein force_keyframes_at_cuts: bricht mit manchen ffmpeg-Versionen ab.
             # Videos werden daher am nächsten Keyframe geschnitten (≈ ±1 s), Audio exakt.
         opts["outtmpl"] = {"default": template}
+        if o.chapters:
+            # Kapitel landen in einem eigenen Ordner, benannt nach dem Video
+            opts["outtmpl"]["chapter"] = "%(title)s/%(section_number)02d - %(section_title)s.%(ext)s"
         opts["noplaylist"] = True
         opts["progress_hooks"] = [lambda d: self._on_progress(item, d)]
         opts["postprocessor_hooks"] = [lambda d: self._on_postprocess(item, d)]
@@ -494,9 +510,13 @@ class Manager:
                 url = self._prepare_spotify(item)
                 if flag.is_set():
                     raise DownloadCancelled("Abgebrochen")
+            splitter = None
             with yt_dlp.YoutubeDL(self._download_opts(item)) as ydl:
                 if item.spotify is not None:
                     ydl.add_post_processor(spotify.SpotifyMetadataPP(item.spotify), when="pre_process")
+                if item.options.chapters:
+                    splitter = _ChapterSplitter(ydl, item)
+                    ydl.add_post_processor(splitter, when="post_process")
                 info = ydl.extract_info(url, download=True)
             path = None
             reqs = (info or {}).get("requested_downloads") or []
@@ -515,6 +535,9 @@ class Manager:
             if info and item.spotify is None:
                 item.title = info.get("title") or item.title
                 item.thumbnail = item.thumbnail or _thumb(info)
+            if splitter and splitter.files:
+                self._finish_chapters(item, splitter.files, info or {})
+                return
             item.status = "done"
             self._count(item)
             item.progress = 100
@@ -538,6 +561,58 @@ class Manager:
             if self.cancel_flags.get(item.id) is flag:
                 self.cancel_flags.pop(item.id, None)
             self._last_emit.pop(item.id, None)
+
+    def _finish_chapters(self, item: Item, files: list[tuple[int, dict[str, Any], str]], info: dict[str, Any]) -> None:
+        """Ersetzt den Eintrag durch je einen Eintrag pro Kapitel; die Gesamtdatei wird gelöscht."""
+        full = self.file_path(item)
+        title = item.title or info.get("title") or "Kapitel"
+        artist = item.uploader or info.get("artist") or info.get("uploader")
+        now = time.time()
+        children = []
+        for number, chapter, filepath in files:
+            p = Path(filepath).resolve()
+            if not p.is_file() or config.DOWNLOAD_DIR not in p.parents:
+                continue
+            ctitle = chapter.get("title") or f"Kapitel {number}"
+            if item.options.kind == "audio" and tags.supported(p):
+                try:  # sinnvolle Tags pro Kapitel: Titel = Kapitel, Album = Video
+                    tags.write(p, ctitle, artist or "", title, None)
+                    tags.set_track(p, number, len(files))
+                except Exception as e:  # noqa: BLE001
+                    log.debug("Kapitel-Tags für %s nicht gesetzt: %s", p, e)
+            child = Item(url=item.url, options=item.options, owner=item.owner, source=item.source,
+                         title=ctitle, thumbnail=item.thumbnail, uploader=artist, playlist=title,
+                         status="done", progress=100, finished=now, created=item.created + number / 1000,
+                         filename=str(p.relative_to(config.DOWNLOAD_DIR)), filesize=p.stat().st_size,
+                         duration=(chapter.get("end_time") or 0) - (chapter.get("start_time") or 0) or None,
+                         chapter={"number": number, "count": len(files), "start": chapter.get("start_time"),
+                                  "end": chapter.get("end_time")})
+            children.append(child)
+        if not children:  # Aufteilen fehlgeschlagen → normalen Download behalten
+            item.status, item.progress, item.finished = "done", 100, now
+            self._count(item)
+            self._update(item)
+            return
+        if full and full.is_file():
+            full.unlink(missing_ok=True)
+        with self.lock:
+            self.items.pop(item.id, None)
+            for c in children:
+                self.items[c.id] = c
+        self.emit("removed", {"id": item.id, "owner": item.owner})
+        for n, c in enumerate(children):
+            self._count(c, downloads=1 if n == 0 else 0)  # ein Video = ein Download
+            self.emit("added", c.public())
+        self._schedule_save()
+        log.info("„%s“ in %d Kapitel aufgeteilt", title, len(children))
+
+    def set_keep(self, item_id: str, keep: bool) -> Item | None:
+        item = self.items.get(item_id)
+        if not item:
+            return None
+        item.keep = bool(keep)
+        self._update(item)
+        return item
 
     def _on_progress(self, item: Item, d: dict[str, Any]) -> None:
         flag = self.cancel_flags.get(item.id)
@@ -663,7 +738,7 @@ class Manager:
         Laufende Downloads schreiben in einen separaten Temp-Ordner und bleiben unberührt.
         Gibt (Anzahl Dateien, freigegebene Bytes) zurück.
         """
-        active_files = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE}
+        active_files = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE or i.keep}
         count = freed = 0
         root = config.DOWNLOAD_DIR
         for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
@@ -679,7 +754,7 @@ class Manager:
                     path.rmdir()
             except OSError as e:
                 log.warning("Konnte %s nicht löschen: %s", path, e)
-        for item in [i for i in self.items.values() if i.status in FINISHED]:
+        for item in [i for i in self.items.values() if i.status in FINISHED and not i.keep]:
             with self.lock:
                 self.items.pop(item.id, None)
             self.emit("removed", {"id": item.id, "owner": item.owner})
@@ -688,13 +763,13 @@ class Manager:
         return count, freed
 
     # ------------------------------------------------------------ statistik
-    def _count(self, item: Item) -> None:
+    def _count(self, item: Item, downloads: int = 1) -> None:
         key = (item.owner or "").lower()
         if not key:
             return
         with self.lock:
             st = self.stats.setdefault(key, {"downloads": 0, "bytes": 0})
-            st["downloads"] = st.get("downloads", 0) + 1
+            st["downloads"] = st.get("downloads", 0) + downloads
             st["bytes"] = st.get("bytes", 0) + int(item.filesize or 0)
 
     def usage(self) -> dict[str, dict[str, int]]:
@@ -715,6 +790,8 @@ class Manager:
                 u = out.setdefault(item.owner.lower(), {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0})
                 u["files_now"] += 1
                 u["bytes_now"] += size
+                if item.keep:
+                    u["bytes_kept"] = u.get("bytes_kept", 0) + size
         return out
 
     # ------------------------------------------------------- auto-löschung
@@ -723,7 +800,7 @@ class Manager:
         if config.RETENTION_HOURS <= 0:
             return 0, 0
         cutoff = time.time() - config.RETENTION_HOURS * 3600
-        active_files = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE}
+        protected = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE or i.keep}
         files = freed = 0
         root = config.DOWNLOAD_DIR
         for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
@@ -731,7 +808,7 @@ class Manager:
                 if path.is_symlink() or path.is_file():
                     st = path.lstat()
                     # ctime = Zeitpunkt, an dem die Datei hier angelegt wurde
-                    if path in active_files or max(st.st_mtime, st.st_ctime) > cutoff:
+                    if path in protected or max(st.st_mtime, st.st_ctime) > cutoff:
                         continue
                     path.unlink()
                     files += 1
@@ -740,7 +817,8 @@ class Manager:
                     path.rmdir()
             except OSError as e:
                 log.warning("Auto-Löschung: %s nicht gelöscht: %s", path, e)
-        old = [i for i in self.items.values() if i.status in FINISHED and (i.finished or i.created) < cutoff]
+        old = [i for i in self.items.values()
+               if i.status in FINISHED and not i.keep and (i.finished or i.created) < cutoff]
         for item in old:
             with self.lock:
                 self.items.pop(item.id, None)
@@ -752,6 +830,24 @@ class Manager:
 
     def active_count(self) -> int:
         return sum(1 for i in self.items.values() if i.status in ("downloading", "processing"))
+
+
+SPONSOR_CATEGORIES = ("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
+
+
+class _ChapterSplitter(FFmpegSplitChaptersPP):
+    """Teilt anhand der Kapitel und merkt sich die erzeugten Dateien."""
+
+    def __init__(self, downloader, item: Item):
+        super().__init__(downloader, force_keyframes=False)
+        self.item = item
+        self.files: list[tuple[int, dict[str, Any], str]] = []
+
+    def _ffmpeg_args_for_chapter(self, number, chapter, info):
+        result = super()._ffmpeg_args_for_chapter(number, chapter, info)
+        if result:
+            self.files.append((number, dict(chapter), result[0]))
+        return result
 
 
 def _source(info: dict[str, Any]) -> str | None:
@@ -780,7 +876,7 @@ def search(source: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
         if not url:
             continue
         out.append({"url": url, "title": e.get("title") or url, "uploader": e.get("uploader") or e.get("channel"),
-                    "duration": e.get("duration"), "thumbnail": _thumb(e), "source": source})
+                    "duration": e.get("duration"), "thumbnail": imgproxy.wrap(_thumb(e)), "source": source})
     return out
 
 

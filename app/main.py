@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -17,15 +18,22 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
+import segno
+import webauthn
 import yt_dlp
+from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+from webauthn.helpers.structs import (AuthenticatorSelectionCriteria, AuthenticatorTransport,
+                                      PublicKeyCredentialDescriptor, ResidentKeyRequirement,
+                                      UserVerificationRequirement)
 from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from . import tags
+from . import imgproxy, tags
 from .sysmon import sysmon
-from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, users
+from . import auth
+from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, tickets, users
 from .downloader import (AUDIO_FORMATS, AUDIO_QUALITIES, SEARCH_PREFIX, VIDEO_FORMATS, VIDEO_QUALITIES, Item,
                          Options, manager)
 from .downloader import search as search_media
@@ -48,6 +56,7 @@ async def _cleanup_loop() -> None:
     while True:
         try:
             await asyncio.to_thread(manager.cleanup_expired)
+            await asyncio.to_thread(imgproxy.cleanup)
         except Exception as e:  # noqa: BLE001
             log.error("Auto-Löschung fehlgeschlagen: %s", e)
         await asyncio.sleep(300)
@@ -90,15 +99,16 @@ api = APIRouter(prefix="/api")
 
 # ------------------------------------------------------- sicherheit
 PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
-                "/api/auth/setup"}
-PUBLIC_STATIC = {"/static/style.css", "/static/login.css", "/static/login.js", "/static/icon.svg"}
+                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/robots.txt", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
+PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js",
+                 "/static/icon.svg"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 CSP = ("default-src 'self'; "
        "script-src 'self'; "
-       "style-src 'self' https://fonts.googleapis.com; "
-       "font-src 'self' https://fonts.gstatic.com; "
-       "img-src 'self' data: blob: https:; "
+       "style-src 'self'; "
+       "font-src 'self'; "
+       "img-src 'self' data: blob:; "
        "connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
 SECURITY_HEADERS = {
@@ -108,6 +118,7 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cross-Origin-Opener-Policy": "same-origin",
+    "X-Robots-Tag": "noindex, nofollow, noarchive",   # private Instanz – nicht in Suchmaschinen
 }
 
 
@@ -148,7 +159,7 @@ async def security(request: Request, call_next):
     else:
         user, key = users.session_user(request.cookies.get(COOKIE_NAME))
         request.state.user, request.state.session_key = user, key
-        public = path in PUBLIC_PATHS or path in PUBLIC_STATIC
+        public = path in PUBLIC_PATHS or path in PUBLIC_STATIC or path.startswith("/static/fonts/")
         if user or public:
             response = await call_next(request)
         elif path.startswith("/api/") or path.startswith("/static/"):
@@ -263,12 +274,284 @@ async def auth_login(request: Request):
         log.warning("Fehlgeschlagene Anmeldung für „%s“ von %s", username, ip)
         await asyncio.sleep(random.uniform(0.4, 0.9))
         raise HTTPException(401, "Benutzername oder Passwort falsch")
+    if user.twofa:
+        # Passwort stimmt – jetzt der zweite Faktor
+        ticket = tickets.create(user.username, remember, ip)
+        return {"twofa": True, "ticket": ticket,
+                "methods": {"totp": bool(user.totp_secret), "passkey": bool(user.passkeys),
+                            "recovery": bool(user.recovery_codes)}}
     limiter.succeeded(ip, username)
+    return _login_response(request, user, remember)
+
+
+def _login_response(request: Request, user: User, remember: bool) -> JSONResponse:
+    ip = _client_ip(request)
     token, ttl = users.create_session(user, remember, ip, request.headers.get("user-agent", ""))
     log.info("Anmeldung: %s von %s", user.username, ip)
     response = JSONResponse({"ok": True, "user": _me(user)})
     _set_session_cookie(request, response, token, ttl if remember else None)
     return response
+
+
+async def _second_factor_failed(request: Request, ticket_id: str, username: str, msg: str):
+    t = tickets.get(ticket_id, _client_ip(request))
+    if t:
+        t.attempts += 1
+    limiter.failed(_client_ip(request), username)
+    log.warning("Falscher zweiter Faktor für „%s“ von %s", username, _client_ip(request))
+    await asyncio.sleep(random.uniform(0.4, 0.9))
+    raise HTTPException(401, msg)
+
+
+def _ticket_user(request: Request, ticket_id: str):
+    t = tickets.get(ticket_id, _client_ip(request))
+    user = users.get(t.username) if t else None
+    if not t or not user or user.disabled:
+        raise HTTPException(401, "Anmeldung abgelaufen – bitte noch einmal mit Passwort anmelden")
+    wait = limiter.retry_after(_client_ip(request), user.username)
+    if wait:
+        raise HTTPException(429, f"Zu viele Fehlversuche. Bitte in {max(1, round(wait / 60))} Minuten erneut versuchen.")
+    return t, user
+
+
+@api.post("/auth/login/2fa")
+async def auth_login_code(request: Request):
+    """Zweiter Schritt mit Code aus der Authenticator-App oder Wiederherstellungscode."""
+    data = await _json(request)
+    ticket_id = str(data.get("ticket", ""))
+    t, user = _ticket_user(request, ticket_id)
+    code = str(data.get("code", "")).strip()[:32]
+    ok = False
+    with users.lock:
+        if user.totp_secret:
+            step = auth.totp_match(user.totp_secret, code, user.totp_last_step)
+            if step:
+                user.totp_last_step = step
+                ok = True
+        if not ok and auth.use_recovery_code(user, code):
+            ok = True
+            log.warning("%s hat einen Wiederherstellungscode benutzt (%d übrig)", user.username, len(user.recovery_codes))
+        if ok:
+            users.save()
+    if not ok:
+        await _second_factor_failed(request, ticket_id, user.username, "Code ist falsch oder abgelaufen")
+    tickets.consume(ticket_id)
+    limiter.succeeded(_client_ip(request), user.username)
+    return _login_response(request, user, t.remember)
+
+
+def _rp(request: Request) -> tuple[str, str]:
+    """Relying-Party-ID und Origin für Passkeys (überschreibbar per Umgebungsvariable)."""
+    rp_id = os.environ.get("WEBAUTHN_RP_ID") or (request.url.hostname or "localhost")
+    origin = os.environ.get("WEBAUTHN_ORIGIN") or f"{request.url.scheme}://{request.url.netloc}"
+    return rp_id, origin
+
+
+@api.post("/auth/login/passkey/options")
+async def passkey_login_options(request: Request):
+    data = await _json(request)
+    t, user = _ticket_user(request, str(data.get("ticket", "")))
+    if not user.passkeys:
+        raise HTTPException(400, "Für dieses Konto ist kein Passkey eingerichtet")
+    rp_id, _ = _rp(request)
+    opts = webauthn.generate_authentication_options(
+        rp_id=rp_id,
+        allow_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(pk["id"]),
+                                                         transports=[AuthenticatorTransport(x) for x in pk.get("transports", [])
+                                                                     if x in AuthenticatorTransport._value2member_map_])
+                           for pk in user.passkeys],
+        user_verification=UserVerificationRequirement.PREFERRED)
+    t.challenge = opts.challenge
+    return Response(webauthn.options_to_json(opts), media_type="application/json")
+
+
+@api.post("/auth/login/passkey")
+async def passkey_login(request: Request):
+    data = await _json(request)
+    ticket_id = str(data.get("ticket", ""))
+    t, user = _ticket_user(request, ticket_id)
+    cred = data.get("credential") or {}
+    pk = next((p for p in user.passkeys if p["id"] == cred.get("id")), None)
+    if not pk or not t.challenge:
+        await _second_factor_failed(request, ticket_id, user.username, "Dieser Passkey gehört nicht zu diesem Konto")
+    rp_id, origin = _rp(request)
+    try:
+        result = webauthn.verify_authentication_response(
+            credential=cred, expected_challenge=t.challenge, expected_rp_id=rp_id, expected_origin=origin,
+            credential_public_key=base64url_to_bytes(pk["public_key"]),
+            credential_current_sign_count=pk.get("sign_count", 0))
+    except Exception as e:  # noqa: BLE001
+        log.info("Passkey-Prüfung fehlgeschlagen: %s", e)
+        await _second_factor_failed(request, ticket_id, user.username, "Passkey konnte nicht bestätigt werden")
+    with users.lock:
+        pk["sign_count"] = result.new_sign_count
+        pk["last_used"] = time.time()
+        users.save()
+    tickets.consume(ticket_id)
+    limiter.succeeded(_client_ip(request), user.username)
+    return _login_response(request, user, t.remember)
+
+
+# -------------------------------------------------- 2fa verwalten
+_pending_totp: dict[str, tuple[str, float]] = {}
+_pending_passkey: dict[str, tuple[bytes, float]] = {}
+
+
+async def _confirm_password(user: User, password: str) -> None:
+    async with _hash_slots:
+        ok = await asyncio.to_thread(users.authenticate, user.username, password or "")
+    if not ok:
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+        raise HTTPException(400, "Das Passwort ist falsch")
+
+
+def _twofa_status(user: User) -> dict[str, Any]:
+    return {"totp": bool(user.totp_secret), "recovery_left": len(user.recovery_codes),
+            "passkeys": [{"id": p["id"], "name": p.get("name") or "Passkey", "created": p.get("created"),
+                          "last_used": p.get("last_used")} for p in user.passkeys]}
+
+
+def _ensure_recovery(user: User) -> list[str] | None:
+    if user.recovery_codes:
+        return None
+    plain, hashed = auth.new_recovery_codes()
+    user.recovery_codes = hashed
+    return plain
+
+
+@api.get("/auth/2fa")
+async def twofa_status(request: Request):
+    return _twofa_status(_user(request))
+
+
+@api.post("/auth/2fa/totp/setup")
+async def totp_setup(request: Request):
+    user = _user(request)
+    secret = auth.new_totp_secret()
+    _pending_totp[user.username.lower()] = (secret, time.time() + 600)
+    uri = auth.totp_uri(secret, user.username)
+    qr = segno.make(uri, error="m").svg_data_uri(scale=6, dark="#0b0b0c", light="#f3f0e7", border=2)
+    return {"secret": " ".join(secret[i:i + 4] for i in range(0, len(secret), 4)), "uri": uri, "qr": qr}
+
+
+@api.post("/auth/2fa/totp/enable")
+async def totp_enable(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    pending = _pending_totp.get(user.username.lower())
+    if not pending or pending[1] < time.time():
+        raise HTTPException(400, "Einrichtung abgelaufen – bitte neu starten")
+    step = auth.totp_match(pending[0], str(data.get("code", "")))
+    if not step:
+        raise HTTPException(400, "Der Code stimmt nicht. Uhrzeit am Handy prüfen und den aktuellen Code eingeben.")
+    with users.lock:
+        user.totp_secret, user.totp_last_step = pending[0], step
+        codes = _ensure_recovery(user)
+        users.save()
+    _pending_totp.pop(user.username.lower(), None)
+    log.info("%s hat die Authenticator-App aktiviert", user.username)
+    return {**_twofa_status(user), "recovery_codes": codes}
+
+
+@api.post("/auth/2fa/totp/disable")
+async def totp_disable(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    await _confirm_password(user, str(data.get("password", "")))
+    with users.lock:
+        user.totp_secret, user.totp_last_step = None, 0
+        if not user.passkeys:
+            user.recovery_codes = []
+        users.save()
+    log.info("%s hat die Authenticator-App deaktiviert", user.username)
+    return _twofa_status(user)
+
+
+@api.post("/auth/2fa/recovery")
+async def recovery_regenerate(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    await _confirm_password(user, str(data.get("password", "")))
+    if not user.twofa:
+        raise HTTPException(400, "Zwei-Faktor-Login ist nicht aktiv")
+    with users.lock:
+        plain, hashed = auth.new_recovery_codes()
+        user.recovery_codes = hashed
+        users.save()
+    return {**_twofa_status(user), "recovery_codes": plain}
+
+
+@api.post("/auth/passkey/register/options")
+async def passkey_register_options(request: Request):
+    user = _user(request)
+    rp_id, _ = _rp(request)
+    opts = webauthn.generate_registration_options(
+        rp_id=rp_id, rp_name="ScobeTube", user_name=user.username, user_display_name=user.username,
+        user_id=hashlib.sha256(("scobetube:" + user.username.lower()).encode()).digest(),
+        exclude_credentials=[PublicKeyCredentialDescriptor(id=base64url_to_bytes(p["id"])) for p in user.passkeys],
+        authenticator_selection=AuthenticatorSelectionCriteria(resident_key=ResidentKeyRequirement.PREFERRED,
+                                                               user_verification=UserVerificationRequirement.PREFERRED))
+    _pending_passkey[user.username.lower()] = (opts.challenge, time.time() + 300)
+    return Response(webauthn.options_to_json(opts), media_type="application/json")
+
+
+@api.post("/auth/passkey/register")
+async def passkey_register(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    pending = _pending_passkey.pop(user.username.lower(), None)
+    if not pending or pending[1] < time.time():
+        raise HTTPException(400, "Einrichtung abgelaufen – bitte noch einmal versuchen")
+    rp_id, origin = _rp(request)
+    cred = data.get("credential") or {}
+    try:
+        v = webauthn.verify_registration_response(credential=cred, expected_challenge=pending[0],
+                                                  expected_rp_id=rp_id, expected_origin=origin)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Passkey konnte nicht gespeichert werden: {e}") from e
+    name = str(data.get("name") or "").strip()[:60] or "Passkey"
+    transports = (cred.get("response") or {}).get("transports") or []
+    with users.lock:
+        if len(user.passkeys) >= 10:
+            raise HTTPException(400, "Maximal 10 Passkeys pro Konto")
+        user.passkeys.append({"id": bytes_to_base64url(v.credential_id),
+                              "public_key": bytes_to_base64url(v.credential_public_key),
+                              "sign_count": v.sign_count, "transports": [str(x) for x in transports][:5],
+                              "name": name, "created": time.time(), "last_used": None})
+        codes = _ensure_recovery(user)
+        users.save()
+    log.info("%s hat einen Passkey hinzugefügt (%s)", user.username, name)
+    return {**_twofa_status(user), "recovery_codes": codes}
+
+
+@api.post("/auth/passkey/delete")
+async def passkey_delete(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    await _confirm_password(user, str(data.get("password", "")))
+    with users.lock:
+        before = len(user.passkeys)
+        user.passkeys = [p for p in user.passkeys if p["id"] != data.get("id")]
+        if len(user.passkeys) == before:
+            raise HTTPException(404, "Passkey nicht gefunden")
+        if not user.twofa:
+            user.recovery_codes = []
+        users.save()
+    return _twofa_status(user)
+
+
+@api.post("/users/{username}/reset-2fa")
+async def reset_user_2fa(username: str, request: Request):
+    admin = _need(request, "admin")
+    user = users.get(username)
+    if not user:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    with users.lock:
+        user.totp_secret, user.totp_last_step, user.recovery_codes, user.passkeys = None, 0, [], []
+        users.revoke_user_sessions(user.username, save=False)
+        users.save()
+    log.warning("%s hat den Zwei-Faktor-Login von „%s“ zurückgesetzt", admin.username, user.username)
+    return user.public()
 
 
 @api.post("/auth/logout")
@@ -458,6 +741,14 @@ async def cancel(item_id: str, request: Request):
     return {"ok": True}
 
 
+@api.post("/items/{item_id}/keep")
+async def keep(item_id: str, request: Request):
+    _item_for(_need(request, "keep"), item_id)
+    data = await _json(request)
+    item = manager.set_keep(item_id, bool(data.get("keep")))
+    return item.public() if item else {}
+
+
 @api.post("/items/{item_id}/retry")
 async def retry(item_id: str, request: Request):
     _item_for(_need(request, "download"), item_id)
@@ -574,6 +865,18 @@ async def set_meta(item_id: str, request: Request):
     item.filesize = path.stat().st_size
     manager._update(item)
     return item.public()
+
+
+@api.get("/img")
+async def proxied_image(request: Request, u: str, s: str):
+    _user(request)
+    if not imgproxy.valid(u, s):
+        raise HTTPException(403, "Ungültige Bildadresse")
+    try:
+        data, ctype = await asyncio.wait_for(asyncio.to_thread(imgproxy.fetch, u), timeout=20)
+    except (ValueError, asyncio.TimeoutError, OSError) as e:
+        raise HTTPException(404, f"Bild nicht verfügbar: {e}") from None
+    return Response(data, media_type=ctype, headers={"Cache-Control": "private, max-age=86400"})
 
 
 @api.get("/play/{item_id}")
@@ -817,6 +1120,22 @@ async def manifest():
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/rechtliches")
+async def legal_page():
+    return FileResponse(STATIC_DIR / "legal.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/legal")
+async def legal_info():
+    return {"operator_name": config.OPERATOR_NAME, "operator_contact": config.OPERATOR_CONTACT,
+            "retention_hours": config.RETENTION_HOURS, "updated": "November 2026"}
+
+
+@app.get("/robots.txt")
+async def robots():
+    return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
 
 
 @app.get("/login")

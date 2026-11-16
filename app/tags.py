@@ -189,3 +189,22 @@ def normalize_cover(data: bytes) -> bytes:
         if proc.returncode != 0 or not dst.exists():
             raise ValueError("Das Bild konnte nicht gelesen werden")
         return dst.read_bytes()
+
+
+def set_track(path: Path, number: int, total: int) -> None:
+    """Tracknummer setzen (z. B. bei aufgeteilten Kapiteln)."""
+    ext = path.suffix.lower()
+    if ext in (".mp3", ".wav"):
+        from mutagen.id3 import TRCK
+        t = _id3(path, create=True)
+        t.delall("TRCK")
+        t.add(TRCK(encoding=3, text=[f"{number}/{total}"]))
+        _save_id3(path, t)
+        return
+    f = MutagenFile(path, easy=True)
+    if f is None:
+        return
+    if f.tags is None:
+        f.add_tags()
+    f.tags["tracknumber"] = [f"{number}/{total}"] if ext != ".m4a" else [f"{number}/{total}"]
+    f.save()

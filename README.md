@@ -25,6 +25,13 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Zuschneiden:** Nur einen Teil laden (z. B. 1:20–2:45). Audio wird exakt geschnitten, Video auf etwa eine Sekunde genau.
 - **ZIP-Download:** Über „Auswählen“ mehrere fertige Downloads markieren und als eine ZIP-Datei laden
 - **Tags bearbeiten (Audio):** Titel, Interpret, Album und Cover nachträglich ändern, auf Wunsch wird die Datei passend umbenannt (MP3, M4A, FLAC, Opus, WAV)
+- **SponsorBlock** (optional): Werbung, Eigenwerbung, Intros, Outros und „Abonnieren“-Erinnerungen aus YouTube-Videos herausschneiden
+- **Kapitel aufteilen** (optional): Mixe, Alben oder Hörbücher anhand ihrer Kapitel in einzelne Dateien zerlegen, mit Titel und Tracknummer
+- **📌 Behalten:** Einzelne Downloads von der Auto-Löschung ausnehmen (eigenes Recht „Downloads dauerhaft behalten“)
+- **Zwei-Faktor-Login:** Authenticator-App (TOTP) und/oder Passkeys (Google-Passwortmanager, Android, iPhone, Windows Hello, Sicherheitsschlüssel) sowie Wiederherstellungscodes
+- **Datenschutzfreundlich:** Schriften lokal, Vorschaubilder über den Server. Der Browser kontaktiert keine fremden Server, es gibt kein Tracking und nur ein technisch notwendiges Cookie.
+- **Rechtliches:** Seite mit Hinweis auf private Nutzung, Nutzungsbedingungen und Datenschutzhinweisen (`/rechtliches`); die Instanz ist für Suchmaschinen gesperrt
+- Ein paar versteckte Easter Eggs 🥚
 - **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
 - **Login mit Benutzerkonten und Rechten:** Der Admin legt Konten an und vergibt Rechte einzeln
@@ -75,6 +82,8 @@ services:
 | `WINDOWS_FILENAMES` | `true` | Dateinamen Windows-/SMB-kompatibel machen |
 | `RETENTION_HOURS` | `10` | Dateien nach so vielen Stunden automatisch löschen (`0` = nie) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | – | Optional: legt beim allerersten Start automatisch den Admin an (statt über die Einrichtungsseite) |
+| `OPERATOR_NAME` / `OPERATOR_CONTACT` | – | Optional: Betreiber und Kontakt auf der Seite „Rechtliches“ |
+| `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` | automatisch | Nur nötig, wenn Passkeys hinter einem Proxy die Domain falsch erkennen (z. B. `tube.example.de` / `https://tube.example.de`) |
 | `TRUSTED_PROXIES` | `127.0.0.1` | IPs von Reverse-Proxys, deren `X-Forwarded-*`-Header vertraut wird |
 | `COOKIE_SECURE` | `auto` | Login-Cookie nur über HTTPS senden (`auto` erkennt HTTPS selbst) |
 | `YTDLP_AUTO_UPDATE` | `true` | yt-dlp bei jedem Containerstart aktualisieren |
@@ -104,6 +113,10 @@ Als Admin öffnest du oben rechts dein Profil und gehst auf **Benutzer & Rechte*
 - Schutz vor CSRF und Clickjacking, dazu eine strikte Content-Security-Policy.
 - Wer ein Passwort ändert, beendet damit alle anderen Sitzungen dieses Kontos. Gesperrte Konten werden sofort abgemeldet.
 - **Für den Zugriff aus dem Internet** solltest du HTTPS über einen Reverse-Proxy nutzen (z. B. Nginx Proxy Manager, Caddy oder Traefik). Ohne HTTPS geht das Passwort unverschlüsselt durchs Netz.
+
+**Zwei-Faktor-Login:** Jeder Benutzer kann ihn oben rechts im Profil unter „Zwei-Faktor-Login“ einschalten, mit einer Authenticator-App und/oder einem Passkey. Dabei werden einmalig 8 Wiederherstellungscodes angezeigt, die man sicher aufbewahren sollte. Verliert jemand sein Handy, kann der Admin den Zwei-Faktor-Login des Kontos unter „Benutzer & Rechte“ zurücksetzen.
+
+> **Passkeys brauchen HTTPS.** Browser erlauben Passkeys nur auf `https://…` (oder `localhost`). Über `http://192.168.x.x` geht nur die Authenticator-App. HTTPS bekommst du am einfachsten mit einem Reverse-Proxy wie Nginx Proxy Manager, Caddy oder Traefik und einer eigenen (Sub-)Domain. Danach unbedingt `TRUSTED_PROXIES` auf die IP des Proxys setzen.
 
 **Passwort vergessen?** Auf dem Server die Datei `data/users.json` löschen und den Container neu starten. Danach erscheint wieder die Einrichtungsseite. Alle Konten sind dann weg, die Downloads bleiben.
 

@@ -64,17 +64,84 @@
         if (password !== $("#password2").value) throw new Error("Die Passwörter stimmen nicht überein");
         await post("auth/setup", { username, password });
       } else {
-        await post("auth/login", { username, password, remember: $("#remember").checked });
+        const res = await post("auth/login", { username, password, remember: $("#remember").checked });
+        if (res.twofa) { showStep2(res); btn.classList.remove("loading"); btn.disabled = false; return; }
       }
-      $("#submitText").textContent = "Los geht's";
-      card.animate([{ transform: "none", opacity: 1 }, { transform: "translateY(-30px) rotate(-3deg) scale(.96)", opacity: 0 }],
-        { duration: 450, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" });
-      setTimeout(() => location.replace(nextTarget()), 380);
+      success();
     } catch (err) {
       fail(err.message);
       btn.classList.remove("loading"); btn.disabled = false;
     }
   });
+
+  function success() {
+      $("#submitText").textContent = "Los geht's";
+      card.animate([{ transform: "none", opacity: 1 }, { transform: "translateY(-30px) rotate(-3deg) scale(.96)", opacity: 0 }],
+        { duration: 450, easing: "cubic-bezier(.22,1,.36,1)", fill: "forwards" });
+      setTimeout(() => location.replace(nextTarget()), 380);
+  }
+
+  // ------------------------------------------------- zweiter Schritt
+  let ticket = null, recoveryMode = false;
+  function showStep2(res) {
+    ticket = res.ticket;
+    form.hidden = true;
+    $("#step2").hidden = false;
+    $("#heading").textContent = "Zweiter Schritt";
+    $("#lead").textContent = "Bestätige, dass du es wirklich bist.";
+    const pk = res.methods.passkey, totp = res.methods.totp;
+    const pkOk = pk && window.ScobePasskey.available();
+    $("#pkLogin").hidden = !pkOk;
+    $("#pkInsecure").hidden = !(pk && !window.ScobePasskey.secure());
+    $("#orLine").hidden = !(pkOk && (totp || res.methods.recovery));
+    setRecovery(!totp);
+    $("#useRecovery").hidden = !totp || !res.methods.recovery;
+    card.animate([{ transform: "rotate(2deg) translateX(30px)", opacity: .3 }, { transform: "none", opacity: 1 }], { duration: 450, easing: "cubic-bezier(.22,1,.36,1)" });
+    if (pkOk) { $("#pkLogin").focus(); passkeyLogin(); } else $("#code").focus();
+  }
+  function setRecovery(on) {
+    recoveryMode = on;
+    $("#codeLabel").textContent = on ? "Wiederherstellungscode" : "Code aus der Authenticator-App";
+    $("#code").placeholder = on ? "ABCD-EFGH" : "123456";
+    $("#code").inputMode = on ? "text" : "numeric";
+    $("#code").value = "";
+    $("#useRecovery").textContent = on ? "Code aus der App verwenden" : "Wiederherstellungscode verwenden";
+  }
+  $("#useRecovery").addEventListener("click", () => { setRecovery(!recoveryMode); $("#code").focus(); });
+  $("#backBtn").addEventListener("click", () => location.reload());
+
+  function fail2(text) {
+    $("#msg2").textContent = text;
+    card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
+    $("#code").select();
+    if (/abgelaufen|erneut/.test(text)) setTimeout(() => location.reload(), 2500);
+  }
+  async function submitCode() {
+    const code = $("#code").value.trim();
+    if (!code) return;
+    const b = $("#codeSubmit"); b.classList.add("loading"); b.disabled = true; $("#msg2").textContent = "";
+    try { await post("auth/login/2fa", { ticket, code }); success(); }
+    catch (err) { fail2(err.message); }
+    finally { b.classList.remove("loading"); b.disabled = false; }
+  }
+  $("#codeForm").addEventListener("submit", (e) => { e.preventDefault(); submitCode(); });
+  $("#code").addEventListener("input", (e) => {
+    if (recoveryMode) return;
+    const v = e.target.value.replace(/\D/g, ""); e.target.value = v;
+    if (v.length === 6) submitCode();
+  });
+
+  async function passkeyLogin() {
+    const b = $("#pkLogin"); b.classList.add("busy"); $("#msg2").textContent = "";
+    try {
+      const opts = await post("auth/login/passkey/options", { ticket });
+      const credential = await window.ScobePasskey.get(opts);
+      await post("auth/login/passkey", { ticket, credential });
+      success();
+    } catch (err) { fail2(err.message); }
+    finally { b.classList.remove("busy"); }
+  }
+  $("#pkLogin").addEventListener("click", passkeyLogin);
 
   fetch("api/auth/status", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
     if (s.user) { location.replace(nextTarget()); return; }

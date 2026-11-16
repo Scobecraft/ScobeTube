@@ -223,7 +223,7 @@
     state.quality[curKind()] = b.dataset.v; store("quality", state.quality);
     $$("#qualityChips .chip").forEach((c) => c.classList.toggle("active", c === b)); restart(b, "pop");
   });
-  ["optPlaylist", "optThumb", "optSubs"].forEach((id) => {
+  ["optPlaylist", "optThumb", "optSubs", "optSponsor", "optChapters"].forEach((id) => {
     const key = id === "optPlaylist" ? "optPlaylist.v2" : id;
     const c = $("#" + id), saved = store(key);
     if (saved !== null) c.checked = saved;
@@ -271,6 +271,8 @@
       kind, format: state.format[fmtKey()], quality: state.quality[kind],
       playlist: $("#optPlaylist").checked, thumbnail: $("#optThumb").checked,
       subtitles: kind === "video" && $("#optSubs").checked,
+      sponsorblock: state.source === "all" && $("#optSponsor").checked,
+      chapters: $("#optChapters").checked,
       ...($("#optCut").checked ? { start: $("#cutStart").value.trim(), end: $("#cutEnd").value.trim() } : {}),
     };
   }
@@ -292,6 +294,7 @@
     if (!v) { urlEl.focus(); return; }
     const go = $("#goBtn"); go.classList.add("loading");
     try {
+      if (!isUrl(v) && window.ScobeEggs && window.ScobeEggs.word(v)) { urlEl.value = ""; autosize(); updateMode(); return; }
       if (isUrl(v)) { await submitUrls(v.replace(/spotify:(track|album|playlist|artist):([A-Za-z0-9]+)/g, "https://open.spotify.com/$1/$2")); urlEl.value = ""; autosize(); updateMode(); }
       else if (!SOURCES[state.source].search) throw new Error("Im Spotify-Modus bitte einen Spotify-Link einfügen (Teilen → Link kopieren)");
       else await runSearch(v);
@@ -376,6 +379,15 @@
     $(".retry", node).addEventListener("click", () => api(`items/${it.id}/retry`, { method: "POST" }).then(() => toast("Neuer Versuch läuft")).catch((e) => toast(e.message, "error")));
     $(".play", node).addEventListener("click", () => player.open(it.id));
     $(".edit", node).addEventListener("click", () => openTagEditor(it.id));
+    $(".pin", node).addEventListener("click", async (e) => {
+      const cur = state.items.get(it.id); if (!cur) return;
+      try {
+        const upd = await api(`items/${it.id}/keep`, { method: "POST", body: { keep: !cur.keep } });
+        upsert(upd);
+        toast(upd.keep ? "📌 Wird behalten – keine Auto-Löschung" : "Wird wieder automatisch gelöscht", upd.keep ? "success" : "info");
+        if (upd.keep) { const r = e.currentTarget.getBoundingClientRect(); fx(r.left + r.width / 2, r.top + r.height / 2, 20); }
+      } catch (err) { toast(err.message, "error"); }
+    });
     node.addEventListener("click", (e) => {
       if (!document.body.classList.contains("selecting") || e.target.closest(".actions")) return;
       const cur = state.items.get(it.id);
@@ -399,6 +411,13 @@
     node.dataset.canDelete = can("delete") ? "1" : "0";
     node.dataset.canFiles = can("files") ? "1" : "0";
     node.dataset.canEdit = can("download") ? "1" : "0";
+    node.dataset.canKeep = can("keep") ? "1" : "0";
+    node.classList.toggle("kept", !!it.keep);
+    const pin = $(".pin", node); pin.classList.toggle("on", !!it.keep);
+    pin.title = it.keep ? "Nicht mehr behalten (wieder automatisch löschen)" : "Behalten – wird nicht automatisch gelöscht";
+    $(".tag.kept", node).textContent = it.keep ? "📌 Behalten" : "";
+    $(".tag.sb", node).textContent = o.sponsorblock ? "SponsorBlock" : "";
+    $(".tag.chap", node).textContent = it.chapter ? `Kapitel ${it.chapter.number}/${it.chapter.count}` : (o.chapters && it.status !== "done" ? "Kapitel ✂" : "");
     const img = $("img.thumb", node), labelImg = $(".vinyl img", node);
     if (it.thumbnail && img.getAttribute("src") !== it.thumbnail) { img.src = it.thumbnail; labelImg.src = it.thumbnail; }
     let dur = it.duration;
@@ -439,7 +458,8 @@
     else if (it.status === "preparing") add("", "Hole Infos…");
     else if (it.status === "done") {
       if (it.filesize) add(fmtBytes(it.filesize));
-      const left = expiresIn(it);
+      const left = it.keep ? null : expiresIn(it);
+      if (it.keep && state.info && state.info.retention_hours) { add("", "📌 wird behalten"); parts[parts.length - 1].className = "expires kept"; }
       if (left != null) { add("", `🗑 ${left > 0 ? "löscht sich in " + fmtLeft(left) : "wird gleich gelöscht"}`); parts[parts.length - 1].className = "expires" + (left < 3600 ? " soon" : ""); }
       if (it.filename) { add("", "📁 " + (it.filename.length > 60 ? "…" + it.filename.slice(-60) : it.filename)); parts[parts.length - 1].title = it.filename; }
     }
@@ -849,6 +869,7 @@
     if (u.admin) b.appendChild(el("span", "pill on", "Admin"));
     if (me) b.appendChild(el("span", "pill", "Du"));
     if (u.disabled) b.appendChild(el("span", "pill", "Gesperrt"));
+    if (u.twofa) b.appendChild(el("span", "pill on", "2FA"));
     name.append(b, el("small", "", `Letzte Anmeldung: ${fmtDate(u.last_login)}`));
     const acts = el("div", "u-acts");
     const edit = el("button", "btn ghost small", "Bearbeiten"); edit.type = "button";
@@ -895,6 +916,16 @@
         catch (err) { toast(err.message, "error"); }
       });
       row.append(lock, del);
+      if (u.twofa) {
+        const r2 = el("button", "btn ghost small", "2FA zurücksetzen"); r2.type = "button";
+        r2.title = "Falls das Handy oder der Passkey verloren ging: App, Passkeys und Codes entfernen";
+        r2.addEventListener("click", async () => {
+          if (!r2.classList.contains("confirm")) { r2.classList.add("confirm"); r2.textContent = "Wirklich zurücksetzen?"; setTimeout(() => { r2.classList.remove("confirm"); r2.textContent = "2FA zurücksetzen"; }, 4000); return; }
+          try { await api(`users/${encodeURIComponent(u.username)}/reset-2fa`, { method: "POST" }); toast(`Zwei-Faktor-Login von ${u.username} entfernt`, "success"); loadUsers(); }
+          catch (err) { toast(err.message, "error"); }
+        });
+        row.append(r2);
+      }
     }
     panel.appendChild(row);
     card.append(top, stats, panel);
@@ -1170,6 +1201,121 @@
     finally { btn.classList.remove("busy"); }
   });
 
+  // ------------------------------------------------- zwei-faktor-login
+  function set2faPill(on) { const p = $("#menu2fa"); p.textContent = on ? "an" : "aus"; p.classList.toggle("on", !!on); }
+  // Passwort verdeckt abfragen (Promise: Passwort oder null bei Abbruch)
+  let confirmResolve = null;
+  function askPassword(text) {
+    if (confirmResolve) confirmResolve(null);
+    $("#confirmText").textContent = text;
+    $("#confirmPw").value = "";
+    openModal("confirmModal");
+    setTimeout(() => $("#confirmPw").focus(), 120);
+    return new Promise((resolve) => { confirmResolve = resolve; });
+  }
+  $("#confirmForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const r = confirmResolve; confirmResolve = null;
+    closeModal($("#confirmModal"));
+    if (r) r($("#confirmPw").value);
+    $("#confirmPw").value = "";
+  });
+  new MutationObserver(() => {
+    if (!$("#confirmModal").classList.contains("open") && confirmResolve) { const r = confirmResolve; confirmResolve = null; r(null); }
+  }).observe($("#confirmModal"), { attributes: true, attributeFilter: ["class"] });
+  function renderSecurity(st) {
+    $("#totpPill").textContent = st.totp ? "aktiv" : "aus"; $("#totpPill").classList.toggle("on", st.totp);
+    $("#totpStart").hidden = st.totp; $("#totpOff").hidden = !st.totp;
+    if (st.totp) $("#totpSetup").hidden = true;
+    $("#pkPill").textContent = String(st.passkeys.length); $("#pkPill").classList.toggle("on", st.passkeys.length > 0);
+    $("#pkList").replaceChildren(...st.passkeys.map((pk, i) => {
+      const row = el("div", "pk"); row.style.animationDelay = `${i * 50}ms`;
+      const info = el("div"); info.style.flex = "1"; info.style.minWidth = "0";
+      info.append(el("b", "", "🔑 " + pk.name), el("small", "", ` · angelegt ${fmtDate(pk.created)} · zuletzt benutzt ${fmtDate(pk.last_used)}`));
+      const del = el("button", "btn ghost small", "Entfernen"); del.type = "button";
+      del.addEventListener("click", async () => {
+        const pw = await askPassword(`Passkey „${pk.name}“ entfernen?`); if (pw === null) return;
+        try { renderSecurity(await api("auth/passkey/delete", { method: "POST", body: { id: pk.id, password: pw } })); toast("Passkey entfernt", "success"); }
+        catch (err) { toast(err.message, "error"); }
+      });
+      row.append(info, del); return row;
+    }));
+    const on = st.totp || st.passkeys.length > 0;
+    $("#secRecovery").hidden = !on;
+    $("#recPill").textContent = `${st.recovery_left} übrig`;
+    $("#recPill").classList.toggle("on", st.recovery_left > 2);
+    set2faPill(on);
+    if (st.recovery_codes) showRecovery(st.recovery_codes);
+  }
+  function showRecovery(codes) {
+    $("#recCodes").hidden = false;
+    $("#recGrid").replaceChildren(...codes.map((c) => el("span", "", c)));
+    $("#recCodes").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    $("#recCodes").dataset.codes = codes.join("\n");
+  }
+  async function openSecurity() {
+    openModal("secModal");
+    $("#recCodes").hidden = true; $("#totpSetup").hidden = true;
+    $("#pkInsecure").hidden = window.ScobePasskey.secure();
+    $("#pkAdd").disabled = !window.ScobePasskey.available();
+    try { renderSecurity(await api("auth/2fa")); } catch (err) { toast(err.message, "error"); }
+  }
+  $("#menuSecurity").addEventListener("click", openSecurity);
+  $("#totpStart").addEventListener("click", async () => {
+    try {
+      const d = await api("auth/2fa/totp/setup", { method: "POST" });
+      $("#totpQr").src = d.qr; $("#totpSecret").textContent = d.secret;
+      $("#totpSetup").hidden = false; $("#totpMsg").textContent = ""; $("#totpCode").value = "";
+      setTimeout(() => $("#totpCode").focus(), 200);
+    } catch (err) { toast(err.message, "error"); }
+  });
+  const enableTotp = async () => {
+    const btn = $("#totpEnable"); btn.classList.add("busy"); $("#totpMsg").textContent = "";
+    try {
+      const st = await api("auth/2fa/totp/enable", { method: "POST", body: { code: $("#totpCode").value } });
+      renderSecurity(st); toast("Authenticator-App aktiviert 🎉", "success");
+      const r = $("#secTotp").getBoundingClientRect(); fx(r.left + r.width / 2, r.top + 30, 40);
+    } catch (err) { $("#totpMsg").textContent = err.message; restart($("#totpCode"), "pop"); }
+    finally { btn.classList.remove("busy"); }
+  };
+  $("#totpEnable").addEventListener("click", enableTotp);
+  $("#totpCode").addEventListener("input", (e) => { const v = e.target.value.replace(/\D/g, ""); e.target.value = v; if (v.length === 6) enableTotp(); });
+  $("#totpOff").addEventListener("click", async () => {
+    const pw = await askPassword("Authenticator-App deaktivieren?"); if (pw === null) return;
+    try { renderSecurity(await api("auth/2fa/totp/disable", { method: "POST", body: { password: pw } })); toast("Authenticator-App deaktiviert"); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#pkAdd").addEventListener("click", async () => {
+    const name = prompt("Name für diesen Passkey (z. B. „Pixel 9“ oder „Laptop“):", /Android/i.test(navigator.userAgent) ? "Android-Handy" : /iPhone|iPad/i.test(navigator.userAgent) ? "iPhone" : "Dieser Computer");
+    if (name === null) return;
+    const btn = $("#pkAdd"); btn.classList.add("busy");
+    try {
+      const opts = await api("auth/passkey/register/options", { method: "POST" });
+      const credential = await window.ScobePasskey.create(opts);
+      renderSecurity(await api("auth/passkey/register", { method: "POST", body: { credential, name } }));
+      toast("Passkey gespeichert 🔑", "success");
+      const r = $("#secPasskey").getBoundingClientRect(); fx(r.left + r.width / 2, r.top + 30, 40);
+    } catch (err) { toast(err.message, "error", 6000); }
+    finally { btn.classList.remove("busy"); }
+  });
+  $("#recNew").addEventListener("click", async () => {
+    const pw = await askPassword("Neue Wiederherstellungscodes erzeugen? Die alten werden ungültig."); if (pw === null) return;
+    try { renderSecurity(await api("auth/2fa/recovery", { method: "POST", body: { password: pw } })); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#recCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("#recCodes").dataset.codes || ""); toast("Codes kopiert", "success"); }
+    catch { toast("Kopieren nicht möglich – bitte abschreiben", "error"); }
+  });
+  $("#recSave").addEventListener("click", () => {
+    const blob = new Blob([`ScobeTube – Wiederherstellungscodes für ${state.me.username}\n${location.origin}\n\n${$("#recCodes").dataset.codes}\n\nJeder Code funktioniert nur einmal.\n`], { type: "text/plain" });
+    const a = el("a"); a.href = URL.createObjectURL(blob); a.download = "scobetube-wiederherstellungscodes.txt"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  window.ScobeToast = toast;
+  window.ScobeFx = fx;
+
   // --------------------------------------------------------------- start
   async function boot() {
     let me;
@@ -1180,6 +1326,7 @@
     $("#userAvatar").textContent = me.user.username.slice(0, 2).toUpperCase();
     $("#userRole").textContent = me.user.admin ? "Administrator" : "Benutzer";
     $("#menuUsers").hidden = !can("admin");
+    set2faPill(me.user.twofa);
     $("#deck").hidden = !can("download");
     $("#clearDone").hidden = !can("delete");
     $("#selectBtn").hidden = !can("files");
