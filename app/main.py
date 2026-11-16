@@ -51,9 +51,17 @@ async def _cleanup_loop() -> None:
         await asyncio.sleep(300)
 
 
-def _host_uptime() -> float | None:
+def _container_uptime() -> float | None:
+    """Laufzeit des Containers = Alter von Prozess 1 (im Docker-Container: tini).
+
+    Übersteht auch Neustarts von ScobeTube selbst (z. B. nach einem yt-dlp-Update).
+    """
     try:
-        return float(Path("/proc/uptime").read_text().split()[0])
+        boot_uptime = float(Path("/proc/uptime").read_text().split()[0])
+        stat = Path("/proc/1/stat").read_text()
+        # Feld 22 = Startzeit in Ticks seit Systemstart (Felder nach dem Prozessnamen in Klammern zählen)
+        start_ticks = int(stat.rsplit(")", 1)[1].split()[19])
+        return max(0.0, boot_uptime - start_ticks / os.sysconf("SC_CLK_TCK"))
     except (OSError, ValueError, IndexError):
         return None
 
@@ -377,7 +385,7 @@ async def info(request: Request):
         "retention_hours": config.RETENTION_HOURS,
         "started_at": STARTED_AT,
         "server_time": time.time(),
-        "host_uptime": _host_uptime(),
+        "container_uptime": _container_uptime(),
         "formats": {
             "video": {"formats": VIDEO_FORMATS, "qualities": VIDEO_QUALITIES},
             "audio": {"formats": AUDIO_FORMATS, "qualities": AUDIO_QUALITIES},
@@ -562,7 +570,7 @@ async def system(request: Request):
     user = _user(request)
     if not (user.has("settings") or user.is_admin):
         raise HTTPException(403, "Dafür fehlt dir das Recht „Einstellungen“")
-    return {**sysmon.snapshot(), "started_at": STARTED_AT, "host_uptime": _host_uptime(),
+    return {**sysmon.snapshot(), "started_at": STARTED_AT, "container_uptime": _container_uptime(),
             "active": manager.active_count()}
 
 

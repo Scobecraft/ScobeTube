@@ -681,10 +681,10 @@
   }
   function tickUptime() {
     const i = state.info; if (!i) return;
-    const host = i.host_uptime != null ? i.host_uptime + (now() - i.server_time) : null;
     const app = now() - i.started_at;
-    $("#uptime").textContent = fmtUptime(host != null ? host : app);
-    $("#uptimeInfo").title = `Server läuft seit ${fmtUptime(host ?? app)} · ScobeTube läuft seit ${fmtUptime(app)}`;
+    const container = i.container_uptime != null ? i.container_uptime + (now() - i.server_time) : app;
+    $("#uptime").textContent = fmtUptime(container);
+    $("#uptimeInfo").title = `Container läuft seit ${fmtUptime(container)}`;
   }
   setInterval(tickUptime, 1000);
   // Restzeiten der fertigen Downloads jede Minute auffrischen

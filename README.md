@@ -17,9 +17,10 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **SoundCloud-Modus:** Tracks, Sets und ganze Profile; Suche direkt in ScobeTube; Ton im Originalformat ohne Qualitätsverlust
 - **Spotify:** Songs, Alben, Playlists und Künstler (Top-Songs). Spotify-Audio ist DRM-geschützt und wird nicht von Spotify geladen. ScobeTube liest nur Titel, Interpret, Album und Cover, sucht denselben Song auf YouTube Music (Abgleich über Länge und Titel) und schreibt die Spotify-Infos samt Cover in die Datei. Wie bei spotDL kann der Abgleich in seltenen Fällen eine andere Version erwischen. Über den ↗-Knopf lässt sich das prüfen.
 - **Fortschritt im Browser-Tab:** Prozentanzeige im Titel und ein Tab-Icon, das sich beim Download füllt
+- **Uptime des Containers** in der Fußzeile, läuft live mit
 - **Auto-Löschung:** Heruntergeladene Dateien werden nach 10 Stunden automatisch gelöscht (einstellbar). An jedem Download steht, wie lange er noch bleibt.
 - **Statistik pro Benutzer:** Downloads und Datenmenge insgesamt sowie der aktuell belegte Speicher, für Admins von allen Benutzern
-- **Live-Systemmonitor:** CPU, RAM und Speicher mit Verlauf der letzten 3 Minuten, dazu Load, Uptime und der RAM-Verbrauch von ScobeTube (sichtbar für Admins und Benutzer mit dem Recht „Einstellungen“)
+- **Live-Systemmonitor:** CPU, RAM und Speicher mit Verlauf der letzten 3 Minuten, dazu Load und der RAM-Verbrauch von ScobeTube (sichtbar für Admins und Benutzer mit dem Recht „Einstellungen“)
 - **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
 - **Login mit Benutzerkonten und Rechten:** Der Admin legt Konten an und vergibt Rechte einzeln
