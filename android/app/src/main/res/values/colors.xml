@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg">#0B0B0C</color>
+    <color name="card">#141416</color>
+    <color name="paper">#F3F0E7</color>
+    <color name="paper2">#BDB9AE</color>
+    <color name="paper3">#7A776F</color>
+    <color name="line_soft">#24F3F0E7</color>
+    <color name="accent">#B9FF33</color>
+    <color name="ink">#0B0B0C</color>
+    <color name="violet">#8F6BFF</color>
+    <color name="red">#FF4B4B</color>
+    <color name="dim">#D9050506</color>
+</resources>

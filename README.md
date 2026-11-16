@@ -135,6 +135,33 @@ Als Admin öffnest du oben rechts dein Profil und gehst auf **Benutzer & Rechte*
 
 **Lesezeichen / iOS-Kurzbefehl:** `http://<server>:8081/?url=<link>&kind=audio` öffnet ScobeTube mit dem Link im Eingabefeld. Gestartet wird der Download per Klick, das schützt vor fremden Seiten, die heimlich Downloads auslösen wollen.
 
+## Android-App
+
+Im Ordner `android/` liegt eine native Android-App (Kotlin, ab Android 8):
+
+- Intro-Animation, Neo-Brutalismus-Design wie die Webseite, Pull-to-Refresh
+- Erscheint im **Teilen-Menü** von YouTube, Spotify, SoundCloud & Co. („In ScobeTube laden“)
+- Downloads landen in `Downloads/ScobeTube`, Datei-Uploads (Cookies, Cover) funktionieren
+- **Updates:** Bei jedem Start fragt die App den Server nach einer neueren Version. Gibt es eine, ploppt ein animiertes Update-Fenster auf. Ein Tipp lädt sie herunter, prüft sie (Prüfsumme, Paketname, Versionsnummer) und installiert sie.
+
+Die Webseite bietet immer die aktuelle APK an: über Banner (Android), Profilmenü, Fußzeile und Anmeldeseite (`/app/download`).
+
+### Neue App-Version veröffentlichen
+
+**Weg 1 – automatisch über GitHub (empfohlen)**
+1. Einmalig zwei Secrets im GitHub-Repo anlegen (Settings → Secrets and variables → Actions): `ANDROID_KEYSTORE_BASE64` und `ANDROID_KEYSTORE_PASSWORD` (Signierschlüssel der App).
+2. Optional `android/release-notes.md` anpassen. Der Text erscheint im Update-Fenster der App.
+3. Tag pushen: `git tag app-v1.1.0 && git push origin app-v1.1.0`, oder auf GitHub unter *Actions → Android-App bauen → Run workflow* eine Version eintragen.
+4. GitHub baut die APK und veröffentlicht sie als Release. Der ScobeTube-Server holt sie sich automatisch (spätestens nach 6 Stunden, sofort über *Einstellungen → Android-App → Von GitHub holen*).
+
+**Weg 2 – Upload:** Als Admin unter *Einstellungen → Android-App* eine APK hochladen. Sie wird geprüft (richtige App, neuere Version) und sofort verteilt.
+
+| Variable | Standard | Beschreibung |
+|---|---|---|
+| `APP_RELEASE_REPO` | `Scobecraft/ScobeTube` | GitHub-Repo, dessen Releases (`app-v…` mit `.apk`) automatisch geholt werden. Leer = aus |
+
+> Der Signierschlüssel muss für alle Versionen gleich bleiben, sonst lehnt Android das Update ab. Bewahre ihn sicher auf.
+
 ## Cloudflare Tunnel
 
 ScobeTube funktioniert gut hinter einem Cloudflare Tunnel und bekommt damit HTTPS. Das ist die Voraussetzung für Passkeys, die Handy-App und das Teilen.

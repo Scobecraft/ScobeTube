@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from . import imgproxy, tags
 from .legal import legal
+from . import appdist
 from .healer import healer
 from .sysmon import sysmon
 from . import auth
@@ -90,6 +91,7 @@ async def lifespan(_: FastAPI):
     for item_id in healer.take_retry_ids():  # nach einer Reparatur: Fehlgeschlagenes neu versuchen
         manager.retry(item_id)
     heal_task = asyncio.create_task(healer.run())
+    app_task = asyncio.create_task(appdist.run())
     cleaner = asyncio.create_task(_cleanup_loop())
     monitor = asyncio.create_task(sysmon.run())
     log.info("ScobeTube %s gestartet – yt-dlp %s – Downloads: %s – Auto-Löschung: %s",
@@ -99,6 +101,7 @@ async def lifespan(_: FastAPI):
     cleaner.cancel()
     monitor.cancel()
     heal_task.cancel()
+    app_task.cancel()
     manager.save()
 
 
@@ -108,7 +111,8 @@ api = APIRouter(prefix="/api")
 
 # ------------------------------------------------------- sicherheit
 PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
-                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/sw.js", "/share", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
+                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/sw.js", "/share",
+                "/api/app/version", "/app/download", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
 PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js", "/static/md.js",
                  "/static/icon.svg", "/static/icon-192.png", "/static/icon-512.png",
                  "/static/icon-maskable-512.png"}
@@ -1277,6 +1281,52 @@ async def manifest():
         "share_target": {"action": "share", "method": "GET",
                          "params": {"title": "title", "text": "text", "url": "url"}},
     }, media_type="application/manifest+json")
+
+
+# ------------------------------------------------------------ Android-App
+@app.get("/api/app/version")
+async def app_version():
+    """Öffentlich: die App fragt hier vor dem Login nach Updates."""
+    return appdist.info()
+
+
+@app.get("/app/download")
+async def app_download():
+    path = appdist.apk_path()
+    info = appdist.info()
+    if not path or not info["available"]:
+        raise HTTPException(404, "Es wurde noch keine App-Version bereitgestellt")
+    name = f"ScobeTube-{info['version_name']}.apk"
+    return FileResponse(path, media_type="application/vnd.android.package-archive",
+                        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                                 "Cache-Control": "no-cache"})
+
+
+@app.post("/api/app/upload")
+async def app_upload(request: Request):
+    admin = _need(request, "admin")
+    form = await request.form()
+    upload = form.get("apk")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "Bitte eine APK-Datei auswählen")
+    data = await upload.read(appdist.MAX_APK + 1)
+    try:
+        res = await asyncio.to_thread(appdist.store, data, str(form.get("notes") or ""), f"Upload von {admin.username}")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Die APK konnte nicht gelesen werden: {e}") from e
+    return res
+
+
+@app.post("/api/app/pull")
+async def app_pull(request: Request):
+    _need(request, "admin")
+    try:
+        res = await asyncio.wait_for(asyncio.to_thread(appdist.pull_github), timeout=300)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"GitHub nicht erreichbar oder Fehler: {e}") from e
+    return {**res, "info": appdist.info()}
 
 
 @app.get("/sw.js")

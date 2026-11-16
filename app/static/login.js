@@ -143,6 +143,13 @@
   }
   $("#pkLogin").addEventListener("click", passkeyLogin);
 
+  // Android-App anbieten (nur im Browser auf Android, nicht in der App selbst)
+  if (/Android/i.test(navigator.userAgent) && !/ScobeTubeApp\//.test(navigator.userAgent)) {
+    fetch("api/app/version").then((r) => r.json()).then((a) => {
+      if (a.available) { $("#loginApp").hidden = false; $("#loginAppVer").textContent = "v" + a.version_name; }
+    }).catch(() => { /* egal */ });
+  }
+
   // Hinweistext (vom Admin bearbeitbar) laden
   fetch("api/legal", { credentials: "same-origin" }).then((r) => r.json()).then((d) => {
     const sec = (d.sections || []).find((x) => x.key === "login");

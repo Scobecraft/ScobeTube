@@ -38,6 +38,9 @@
               <div class="my-stats" id="myStats"></div></div>
             <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte</button>
             <button id="menuSecurity"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Zwei-Faktor-Login <span class="pill" id="menu2fa">aus</span></button>
+            <a class="menu-link" id="menuApp" href="app/download" hidden><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19"/><path d="M11 18.5h2"/></svg>Android-App laden <span class="pill" id="menuAppVer"></span></a>
+            <button id="menuAppUpdate" hidden><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Nach App-Update suchen</button>
+            <button id="menuServer" hidden><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Server wechseln</button>
             <button id="menuPassword"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Passwort ändern</button>
             <button id="menuLogout"><svg viewBox="0 0 24 24"><path d="M15 4h5v16h-5M10 8l-4 4 4 4M6 12h11"/></svg>Abmelden</button>
           </div>
@@ -46,6 +49,12 @@
     </header>
 
     <div class="notices" id="notices"></div>
+    <div class="app-banner" id="appBanner" hidden>
+      <span class="ab-icon"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></span>
+      <p><b>ScobeTube als Android-App</b>Mit Teilen-Menü, Update-Hinweisen und schickem Intro. <span class="mono" id="appBannerVer"></span></p>
+      <a class="btn accent small" href="app/download" id="appBannerDl">Laden</a>
+      <button class="icon-btn" id="appBannerX" aria-label="Ausblenden">×</button>
+    </div>
 
     <section class="hero">
       <h1 class="mega" aria-label="ScobeTube"><span class="row" data-split>Scobe</span><span class="row r2" data-split>Tube</span></h1>
@@ -184,7 +193,7 @@
     </section>
 
     <footer class="foot">
-      <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span> · <a class="foot-link" href="rechtliches">Rechtliches</a> · Nur private Nutzung</span>
+      <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span> · <a class="foot-link" href="rechtliches">Rechtliches</a><span id="footApp" hidden> · <a class="foot-link" href="app/download">📱 Android-App</a></span> · Nur private Nutzung</span>
       <span class="foot-info">
         <span id="retentionInfo" hidden title="Alle heruntergeladenen Dateien werden automatisch vom Server gelöscht">🗑 Auto-Löschung nach <b id="retentionHours">10</b> Std.</span>
         <span id="uptimeInfo" title="">⏱ Uptime <b id="uptime">…</b></span>
@@ -232,6 +241,21 @@
         </div>
       </div>
 
+      <div class="section" id="secApp" hidden>
+        <div class="txt"><h4>📦 Android-App <span class="pill" id="appVerPill">–</span></h4>
+          <p id="appInfo">Noch keine App-Version bereitgestellt.</p>
+          <p class="legal-small">Neue Versionen kommen auf zwei Wegen: <b>automatisch</b>, sobald auf GitHub ein Release mit Tag <code>app-v1.2.3</code> erscheint (Prüfung alle 6 Stunden), oder per <b>Upload</b> hier. Die App zeigt das Update sofort beim nächsten Öffnen an.</p>
+          <div class="app-upload">
+            <label class="btn ghost small"><input type="file" id="apkFile" accept=".apk,application/vnd.android.package-archive" hidden><span id="apkFileLabel">APK auswählen</span></label>
+            <textarea class="input" id="apkNotes" rows="2" placeholder="Was ist neu? (wird in der App angezeigt)"></textarea>
+          </div>
+        </div>
+        <div class="acts">
+          <button class="btn small" id="apkUpload" disabled><span>Hochladen</span></button>
+          <button class="btn ghost small" id="apkPull"><span>Von GitHub holen</span></button>
+        </div>
+      </div>
+
       <div class="section" id="secPhone" hidden>
         <div class="txt"><h4>📱 Vom Handy teilen</h4>
           <p class="warn-box" id="phoneInsecure" hidden>⚠ Teilen vom Handy geht nur über die verschlüsselte HTTPS-Adresse. Öffne ScobeTube über <b>https://…</b>.</p>
@@ -242,7 +266,7 @@
             <p class="legal-small">Gestartet wird nichts automatisch: Du wählst nach dem Teilen mit einem Tipp „Video“ oder „Audio“. Ohne Anmeldung geht nichts.</p>
           </div>
         </div>
-        <div class="acts"><button class="btn ghost small" id="copyTemplate">Adresse kopieren</button></div>
+        <div class="acts"><a class="btn accent small" id="phoneAppDl" href="app/download" hidden>📱 App laden</a><button class="btn ghost small" id="copyTemplate">Adresse kopieren</button></div>
       </div>
 
       <div class="section" id="secBookmarks" hidden>

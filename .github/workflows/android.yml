@@ -1,0 +1,67 @@
+name: Android-App bauen
+
+# Neue App-Version veröffentlichen:
+#   1. android/release-notes.md anpassen (wird in der App angezeigt)
+#   2. Tag pushen:  git tag app-v1.2.0 && git push origin app-v1.2.0
+#      – oder hier auf GitHub unter Actions → „Android-App bauen“ → „Run workflow“ eine Version eingeben.
+# Der ScobeTube-Server holt das Release automatisch (spätestens nach 6 Stunden, sofort per Admin-Knopf).
+on:
+  push:
+    tags: ["app-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, z. B. 1.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version bestimmen
+        id: v
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then V="${{ github.event.inputs.version }}"; else V="${GITHUB_REF_NAME#app-v}"; fi
+          if ! echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then echo "::error::Version muss wie 1.2.0 aussehen (bekommen: $V)"; exit 1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Signierschlüssel prüfen
+        env:
+          KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KS" ] || [ -z "$PW" ]; then
+            echo "::error::Die Secrets ANDROID_KEYSTORE_BASE64 und ANDROID_KEYSTORE_PASSWORD fehlen (Settings → Secrets and variables → Actions)."
+            exit 1
+          fi
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: APK bauen
+        working-directory: android
+        env:
+          APP_VERSION_NAME: ${{ steps.v.outputs.version }}
+          SCOBETUBE_KEYSTORE: ${{ runner.temp }}/release.jks
+          SCOBETUBE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          mv app/build/outputs/apk/release/app-release.apk "ScobeTube-${{ steps.v.outputs.version }}.apk"
+
+      - name: Release veröffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-v${{ steps.v.outputs.version }}
+          name: ScobeTube App ${{ steps.v.outputs.version }}
+          body_path: android/release-notes.md
+          files: android/ScobeTube-${{ steps.v.outputs.version }}.apk

@@ -1,0 +1,3 @@
+- 🎉 Erste Version der ScobeTube-App
+- Intro-Animation, Teilen-Menü („In ScobeTube laden“) und Pull-to-Refresh
+- Updates werden automatisch angezeigt und mit einem Tipp installiert

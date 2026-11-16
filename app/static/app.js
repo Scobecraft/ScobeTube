@@ -1399,6 +1399,11 @@
     catch { toast("Kopieren nicht möglich – bitte abschreiben", "error"); }
   });
   $("#recSave").addEventListener("click", () => {
+    if (window.ScobeAndroid) {
+      const txt = `ScobeTube – Wiederherstellungscodes für ${state.me.username}\n${location.origin}\n\n${$("#recCodes").dataset.codes}\n\nJeder Code funktioniert nur einmal.\n`;
+      window.ScobeAndroid.saveFile(btoa(unescape(encodeURIComponent(txt))), "scobetube-wiederherstellungscodes.txt", "text/plain");
+      return;
+    }
     const blob = new Blob([`ScobeTube – Wiederherstellungscodes für ${state.me.username}\n${location.origin}\n\n${$("#recCodes").dataset.codes}\n\nJeder Code funktioniert nur einmal.\n`], { type: "text/plain" });
     const a = el("a"); a.href = URL.createObjectURL(blob); a.download = "scobetube-wiederherstellungscodes.txt"; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -1472,6 +1477,65 @@
     catch { toast("Kopieren nicht möglich – bitte abschreiben", "error"); }
   });
 
+  // ------------------------------------------------------- android-app
+  const inApp = !!window.ScobeAndroid || /ScobeTubeApp\//.test(navigator.userAgent);
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  async function loadAppInfo() {
+    let a = null;
+    try { a = await fetch("api/app/version").then((r) => r.json()); } catch { /* egal */ }
+    const ok = !!(a && a.available);
+    const ver = ok ? "v" + a.version_name : "";
+    // Download-Knöpfe nur im Browser zeigen – in der App selbst nicht
+    $("#menuApp").hidden = inApp || !ok; $("#menuAppVer").textContent = ver;
+    $("#footApp").hidden = inApp || !ok;
+    $("#phoneAppDl").hidden = inApp || !ok;
+    let dismissed = false; try { dismissed = localStorage.getItem("st2:appBanner") === (a && a.version_name); } catch { /* egal */ }
+    $("#appBanner").hidden = inApp || !ok || !isAndroid || dismissed;
+    $("#appBannerVer").textContent = ver;
+    if (can("admin")) {
+      $("#secApp").hidden = false;
+      $("#appVerPill").textContent = ok ? ver : "keine";
+      $("#appVerPill").classList.toggle("on", ok);
+      $("#appInfo").textContent = ok
+        ? `Version ${a.version_name} · ${fmtBytes(a.size)} · ${a.source || "?"} · ${fmtDate(a.updated)}`
+        : "Noch keine App-Version bereitgestellt.";
+    }
+  }
+  $("#appBannerX").addEventListener("click", () => {
+    $("#appBanner").hidden = true;
+    try { localStorage.setItem("st2:appBanner", ($("#appBannerVer").textContent || "").slice(1)); } catch { /* egal */ }
+  });
+  $("#appBannerDl").addEventListener("click", () => toast("Download startet – danach die Datei öffnen und „Installieren“ tippen", "info", 6000));
+  if (inApp) {
+    $("#menuAppUpdate").hidden = false; $("#menuServer").hidden = false;
+    $("#menuAppUpdate").addEventListener("click", () => { $("#userMenu").hidden = true; window.ScobeAndroid && window.ScobeAndroid.checkUpdate(); });
+    $("#menuServer").addEventListener("click", () => { $("#userMenu").hidden = true; window.ScobeAndroid && window.ScobeAndroid.changeServer(); });
+  }
+  $("#apkFile").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    $("#apkFileLabel").textContent = f ? `${f.name} (${fmtBytes(f.size)})` : "APK auswählen";
+    $("#apkUpload").disabled = !f;
+  });
+  $("#apkUpload").addEventListener("click", async (e) => {
+    const f = $("#apkFile").files[0]; if (!f) return;
+    const btn = e.currentTarget; btn.classList.add("busy");
+    const fd = new FormData(); fd.append("apk", f); fd.append("notes", $("#apkNotes").value);
+    try {
+      const r = await api("app/upload", { method: "POST", body: fd });
+      toast(`App-Version ${r.version_name} ist online – alle Apps zeigen jetzt das Update an 🎉`, "success", 6000);
+      const rr = btn.getBoundingClientRect(); fx(rr.left + rr.width / 2, rr.top, 50);
+      $("#apkFile").value = ""; $("#apkFileLabel").textContent = "APK auswählen"; $("#apkNotes").value = ""; btn.disabled = true;
+      loadAppInfo();
+    } catch (err) { toast(err.message, "error", 7000); }
+    finally { btn.classList.remove("busy"); }
+  });
+  $("#apkPull").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; btn.classList.add("busy");
+    try { const r = await api("app/pull", { method: "POST" }); toast(r.message, r.updated ? "success" : "info", 6000); loadAppInfo(); }
+    catch (err) { toast(err.message, "error", 7000); }
+    finally { btn.classList.remove("busy"); }
+  });
+
   window.ScobeToast = toast;
   window.ScobeFx = fx;
 
@@ -1521,6 +1585,7 @@
     document.fonts && document.fonts.ready.then(moveKindSlider);
     connect(); loadInfo();
     if (can("settings")) { startSystem(); loadHealer(); setInterval(loadHealer, 60000); }
+    loadAppInfo();
     if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
   }
   boot();

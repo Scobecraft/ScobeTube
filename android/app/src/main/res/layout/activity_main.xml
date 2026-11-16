@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fitsSystemWindows="true">
+
+    <!-- Die eigentliche ScobeTube-Seite -->
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0">
+        <WebView
+            android:id="@+id/web"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/bg" />
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    <!-- Fortschrittsbalken beim Laden von Seiten -->
+    <View
+        android:id="@+id/loadBar"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:background="@color/accent"
+        android:scaleX="0"
+        android:transformPivotX="0dp" />
+
+    <!-- Intro-Animation -->
+    <FrameLayout
+        android:id="@+id/intro"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg"
+        android:clickable="true"
+        android:focusable="true">
+
+        <View
+            android:id="@+id/introGlow"
+            android:layout_width="520dp"
+            android:layout_height="520dp"
+            android:layout_gravity="center"
+            android:alpha="0"
+            android:background="@drawable/bg_glow" />
+
+        <de.scobecraft.scobetube.VinylView
+            android:id="@+id/introVinyl"
+            android:layout_width="250dp"
+            android:layout_height="250dp"
+            android:layout_gravity="center"
+            android:layout_marginBottom="70dp" />
+
+        <FrameLayout
+            android:id="@+id/introLogo"
+            android:layout_width="104dp"
+            android:layout_height="104dp"
+            android:layout_gravity="center"
+            android:layout_marginBottom="70dp"
+            android:background="@drawable/bg_logo">
+            <ImageView
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:layout_gravity="center"
+                android:layout_marginEnd="8dp"
+                android:layout_marginBottom="8dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_play" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:id="@+id/introTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="140dp"
+            android:orientation="horizontal" />
+
+        <TextView
+            android:id="@+id/introSticker"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="210dp"
+            android:background="@drawable/bg_sticker"
+            android:fontFamily="@font/jetbrains_mono"
+            android:paddingStart="14dp"
+            android:paddingTop="7dp"
+            android:paddingEnd="17dp"
+            android:paddingBottom="10dp"
+            android:rotation="-3"
+            android:text="● SELF-HOSTED"
+            android:textColor="@color/ink"
+            android:textSize="12sp" />
+    </FrameLayout>
+
+    <!-- Erste Einrichtung / Server ändern -->
+    <ScrollView
+        android:id="@+id/setup"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg"
+        android:fillViewport="true"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/setupCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="24dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingStart="26dp"
+            android:paddingTop="28dp"
+            android:paddingEnd="36dp"
+            android:paddingBottom="38dp">
+            <TextView
+                android:id="@+id/setupTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/unbounded"
+                android:text="HALLO!"
+                android:textColor="@color/paper"
+                android:textSize="34sp" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/space_grotesk"
+                android:text="Mit welchem ScobeTube-Server soll sich die App verbinden?"
+                android:textColor="@color/paper2"
+                android:textSize="15sp" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="22dp"
+                android:fontFamily="@font/jetbrains_mono"
+                android:letterSpacing="0.14"
+                android:text="SERVER-ADRESSE"
+                android:textColor="@color/paper3"
+                android:textSize="11sp" />
+            <EditText
+                android:id="@+id/setupUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_input"
+                android:fontFamily="@font/space_grotesk"
+                android:imeOptions="actionGo"
+                android:importantForAutofill="no"
+                android:inputType="textUri"
+                android:padding="14dp"
+                android:singleLine="true"
+                android:textColor="@color/paper"
+                android:textColorHint="@color/paper3"
+                android:hint="https://…"
+                android:textSize="16sp" />
+            <TextView
+                android:id="@+id/setupMsg"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:fontFamily="@font/jetbrains_mono"
+                android:textColor="@color/red"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/setupGo"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_button"
+                android:fontFamily="@font/unbounded"
+                android:gravity="center"
+                android:paddingEnd="5dp"
+                android:paddingBottom="5dp"
+                android:text="VERBINDEN  →"
+                android:textColor="@color/ink"
+                android:textSize="18sp" />
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- Offline -->
+    <LinearLayout
+        android:id="@+id/offline"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+        <de.scobecraft.scobetube.VinylView
+            android:id="@+id/offlineVinyl"
+            android:layout_width="160dp"
+            android:layout_height="160dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:fontFamily="@font/unbounded"
+            android:text="KEIN SIGNAL"
+            android:textColor="@color/paper"
+            android:textSize="26sp" />
+        <TextView
+            android:id="@+id/offlineMsg"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:fontFamily="@font/space_grotesk"
+            android:gravity="center"
+            android:text="Der Server ist gerade nicht erreichbar."
+            android:textColor="@color/paper2"
+            android:textSize="15sp" />
+        <TextView
+            android:id="@+id/offlineRetry"
+            android:layout_width="220dp"
+            android:layout_height="58dp"
+            android:layout_marginTop="26dp"
+            android:background="@drawable/bg_button"
+            android:fontFamily="@font/unbounded"
+            android:gravity="center"
+            android:paddingEnd="5dp"
+            android:paddingBottom="5dp"
+            android:text="NOCHMAL"
+            android:textColor="@color/ink"
+            android:textSize="16sp" />
+        <TextView
+            android:id="@+id/offlineServer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:fontFamily="@font/jetbrains_mono"
+            android:padding="8dp"
+            android:text="Server-Adresse ändern"
+            android:textColor="@color/paper2"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- Update-Fenster -->
+    <FrameLayout
+        android:id="@+id/update"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+        <View
+            android:id="@+id/updateDim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/dim" />
+        <de.scobecraft.scobetube.ConfettiView
+            android:id="@+id/confetti"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+        <LinearLayout
+            android:id="@+id/updateCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="22dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingTop="26dp"
+            android:paddingEnd="34dp"
+            android:paddingBottom="36dp">
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="110dp">
+                <de.scobecraft.scobetube.VinylView
+                    android:id="@+id/updateVinyl"
+                    android:layout_width="104dp"
+                    android:layout_height="104dp" />
+                <TextView
+                    android:id="@+id/updateBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="end|top"
+                    android:background="@drawable/bg_sticker"
+                    android:fontFamily="@font/unbounded"
+                    android:paddingStart="14dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="17dp"
+                    android:paddingBottom="11dp"
+                    android:rotation="6"
+                    android:text="NEU!"
+                    android:textColor="@color/ink"
+                    android:textSize="18sp" />
+            </FrameLayout>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:fontFamily="@font/unbounded"
+                android:text="UPDATE DA!"
+                android:textColor="@color/paper"
+                android:textSize="30sp" />
+            <TextView
+                android:id="@+id/updateVersion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="@font/jetbrains_mono"
+                android:textColor="@color/accent"
+                android:textSize="14sp" />
+            <TextView
+                android:id="@+id/updateNotes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:fontFamily="@font/space_grotesk"
+                android:lineSpacingMultiplier="1.25"
+                android:maxLines="9"
+                android:scrollbars="vertical"
+                android:textColor="@color/paper2"
+                android:textSize="14sp" />
+            <ProgressBar
+                android:id="@+id/updateProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="22dp"
+                android:layout_marginTop="18dp"
+                android:max="1000"
+                android:progressDrawable="@drawable/bg_progress"
+                android:visibility="gone" />
+            <TextView
+                android:id="@+id/updateStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="@font/jetbrains_mono"
+                android:textColor="@color/paper2"
+                android:textSize="12sp"
+                android:visibility="gone" />
+            <TextView
+                android:id="@+id/updateGo"
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/bg_button"
+                android:fontFamily="@font/unbounded"
+                android:gravity="center"
+                android:paddingEnd="5dp"
+                android:paddingBottom="5dp"
+                android:text="JETZT INSTALLIEREN"
+                android:textColor="@color/ink"
+                android:textSize="16sp" />
+            <TextView
+                android:id="@+id/updateLater"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:fontFamily="@font/jetbrains_mono"
+                android:gravity="center"
+                android:text="Später"
+                android:textColor="@color/paper2"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>
