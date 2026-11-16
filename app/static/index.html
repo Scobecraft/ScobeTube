@@ -36,7 +36,8 @@
             <span class="avatar" id="userAvatar">?</span><span class="user-name" id="userName"></span>
           </button>
           <div class="user-menu box" id="userMenu" role="menu" hidden>
-            <div class="who"><span class="label" id="userRole">Benutzer</span><b id="userMenuName"></b></div>
+            <div class="who"><span class="label" id="userRole">Benutzer</span><b id="userMenuName"></b>
+              <div class="my-stats" id="myStats"></div></div>
             <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte</button>
             <button id="menuPassword"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Passwort ändern</button>
             <button id="menuLogout"><svg viewBox="0 0 24 24"><path d="M15 4h5v16h-5M10 8l-4 4 4 4M6 12h11"/></svg>Abmelden</button>
@@ -117,6 +118,40 @@
       <div class="results-grid" id="resultsGrid"></div>
     </section>
 
+    <section class="sys box" id="sysPanel" hidden>
+      <div class="sys-head">
+        <h2 class="sys-title"><span class="live-dot"></span>System <small>live</small></h2>
+        <div class="sys-meta mono" id="sysMeta"></div>
+        <button class="btn ghost small" id="sysToggle" aria-expanded="true">Einklappen</button>
+      </div>
+      <div class="sys-body" id="sysBody">
+        <div class="gauges">
+          <div class="gauge" data-key="cpu">
+            <svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-val" cx="60" cy="60" r="50"/></svg>
+            <div class="g-center"><b class="g-num">–</b><span class="g-label">CPU</span></div>
+            <div class="g-sub" id="cpuSub"></div>
+          </div>
+          <div class="gauge" data-key="mem">
+            <svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-val" cx="60" cy="60" r="50"/></svg>
+            <div class="g-center"><b class="g-num">–</b><span class="g-label">RAM</span></div>
+            <div class="g-sub" id="memSub"></div>
+          </div>
+          <div class="gauge" data-key="disk">
+            <svg viewBox="0 0 120 120"><circle class="g-track" cx="60" cy="60" r="50"/><circle class="g-val" cx="60" cy="60" r="50"/></svg>
+            <div class="g-center"><b class="g-num">–</b><span class="g-label">Speicher</span></div>
+            <div class="g-sub" id="diskSub"></div>
+          </div>
+        </div>
+        <div class="spark">
+          <div class="spark-legend mono"><span><i class="c1"></i>CPU</span><span><i class="c2"></i>RAM</span><span class="dim">letzte 3 Min.</span></div>
+          <svg id="spark" viewBox="0 0 300 100" preserveAspectRatio="none">
+            <line x1="0" y1="25" x2="300" y2="25"/><line x1="0" y1="50" x2="300" y2="50"/><line x1="0" y1="75" x2="300" y2="75"/>
+            <path class="s-mem-area" d=""/><path class="s-mem" d=""/><path class="s-cpu" d=""/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
     <section class="queue">
       <div class="queue-head">
         <h2 class="queue-title">Queue<sup id="activeSup"></sup></h2>
@@ -139,7 +174,11 @@
 
     <footer class="foot">
       <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span></span>
-      <button id="footStorage" hidden>💾 <span id="footStorageText">…</span></button>
+      <span class="foot-info">
+        <span id="retentionInfo" hidden title="Alle heruntergeladenen Dateien werden automatisch vom Server gelöscht">🗑 Auto-Löschung nach <b id="retentionHours">10</b> Std.</span>
+        <span id="uptimeInfo" title="">⏱ Uptime <b id="uptime">…</b></span>
+        <button id="footStorage" hidden>💾 <span id="footStorageText">…</span></button>
+      </span>
     </footer>
   </div>
 
@@ -186,6 +225,7 @@
     <div class="modal-bg" data-close></div>
     <div class="modal-card wide" role="dialog" aria-labelledby="usersTitle">
       <div class="modal-head"><h2 id="usersTitle">Benutzer &amp; Rechte</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="totals" id="usersTotals"></div>
       <div class="users" id="usersList"></div>
       <form class="new-user form" id="newUserForm" autocomplete="off">
         <h4>+ Neues Konto</h4>

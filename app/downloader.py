@@ -113,6 +113,8 @@ class Manager:
         self._last_emit: dict[str, float] = {}
         self._save_pending = False
         self.state_file = config.STATE_DIR / "state.json"
+        # Statistik je Benutzer (bleibt auch nach dem Löschen der Dateien erhalten)
+        self.stats: dict[str, dict[str, int]] = {}
         self.tmp_dir = config.STATE_DIR / "tmp"
 
     # ------------------------------------------------------------------ setup
@@ -132,12 +134,17 @@ class Manager:
         except Exception as e:  # noqa: BLE001
             log.warning("Status-Datei konnte nicht gelesen werden: %s", e)
             return
+        self.stats = {k: dict(v) for k, v in (data.get("stats") or {}).items() if isinstance(v, dict)}
         for raw in data.get("items", []):
             try:
                 item = Item.from_dict(raw)
             except Exception:  # noqa: BLE001
                 continue
             self.items[item.id] = item
+        if "stats" not in data:  # Update von älterer Version: vorhandene Downloads nachzählen
+            for item in self.items.values():
+                if item.status == "done":
+                    self._count(item)
         # Unterbrochene Downloads wieder einreihen
         for item in list(self.items.values()):
             if item.status in ACTIVE:
@@ -150,7 +157,7 @@ class Manager:
 
     def save(self) -> None:
         with self.lock:
-            data = {"items": [asdict(i) for i in self.items.values()]}
+            data = {"items": [asdict(i) for i in self.items.values()], "stats": self.stats}
         tmp = self.state_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
         tmp.replace(self.state_file)
@@ -207,6 +214,7 @@ class Manager:
             "no_warnings": True,
             "noprogress": True,
             "cachedir": str(config.STATE_DIR / "cache"),
+            "updatetime": False,  # Datei-Zeitstempel = Download-Zeit (wichtig für die Auto-Löschung)
             "windowsfilenames": config.WINDOWS_FILENAMES,
             "socket_timeout": 30,
             "retries": 10,
@@ -455,6 +463,7 @@ class Manager:
                 item.title = info.get("title") or item.title
                 item.thumbnail = item.thumbnail or _thumb(info)
             item.status = "done"
+            self._count(item)
             item.progress = 100
             item.speed = item.eta = None
             item.finished = time.time()
@@ -624,6 +633,69 @@ class Manager:
         self._schedule_save()
         log.info("Speicher geleert: %d Dateien, %d Bytes", count, freed)
         return count, freed
+
+    # ------------------------------------------------------------ statistik
+    def _count(self, item: Item) -> None:
+        key = (item.owner or "").lower()
+        if not key:
+            return
+        with self.lock:
+            st = self.stats.setdefault(key, {"downloads": 0, "bytes": 0})
+            st["downloads"] = st.get("downloads", 0) + 1
+            st["bytes"] = st.get("bytes", 0) + int(item.filesize or 0)
+
+    def usage(self) -> dict[str, dict[str, int]]:
+        """Je Benutzer: Downloads gesamt, Datenmenge gesamt, aktuell belegter Speicher."""
+        out: dict[str, dict[str, int]] = {}
+        with self.lock:
+            for key, st in self.stats.items():
+                out[key] = {"downloads": st.get("downloads", 0), "bytes_total": st.get("bytes", 0),
+                            "files_now": 0, "bytes_now": 0}
+            for item in self.items.values():
+                if item.status != "done" or not item.owner:
+                    continue
+                path = self.file_path(item)
+                try:
+                    size = path.stat().st_size if path else 0
+                except OSError:
+                    continue
+                u = out.setdefault(item.owner.lower(), {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0})
+                u["files_now"] += 1
+                u["bytes_now"] += size
+        return out
+
+    # ------------------------------------------------------- auto-löschung
+    def cleanup_expired(self) -> tuple[int, int]:
+        """Löscht Dateien und fertige Einträge, die älter als RETENTION_HOURS sind."""
+        if config.RETENTION_HOURS <= 0:
+            return 0, 0
+        cutoff = time.time() - config.RETENTION_HOURS * 3600
+        active_files = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE}
+        files = freed = 0
+        root = config.DOWNLOAD_DIR
+        for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            try:
+                if path.is_symlink() or path.is_file():
+                    st = path.lstat()
+                    # ctime = Zeitpunkt, an dem die Datei hier angelegt wurde
+                    if path in active_files or max(st.st_mtime, st.st_ctime) > cutoff:
+                        continue
+                    path.unlink()
+                    files += 1
+                    freed += st.st_size
+                elif path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+            except OSError as e:
+                log.warning("Auto-Löschung: %s nicht gelöscht: %s", path, e)
+        old = [i for i in self.items.values() if i.status in FINISHED and (i.finished or i.created) < cutoff]
+        for item in old:
+            with self.lock:
+                self.items.pop(item.id, None)
+            self.emit("removed", {"id": item.id, "owner": item.owner})
+        if files or old:
+            self._schedule_save()
+            log.info("Auto-Löschung: %d Dateien (%d Bytes) und %d Einträge entfernt", files, freed, len(old))
+        return files, freed
 
     def active_count(self) -> int:
         return sum(1 for i in self.items.values() if i.status in ("downloading", "processing"))

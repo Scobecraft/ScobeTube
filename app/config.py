@@ -33,6 +33,12 @@ PLAYLIST_SUBFOLDER = _bool("PLAYLIST_SUBFOLDER", True)
 PLAYLIST_LIMIT = _int("PLAYLIST_LIMIT", 0)  # 0 = unbegrenzt
 WINDOWS_FILENAMES = _bool("WINDOWS_FILENAMES", True)
 
+# Heruntergeladene Dateien nach so vielen Stunden automatisch löschen (0 = nie)
+try:
+    RETENTION_HOURS = max(0.0, float(os.environ.get("RETENTION_HOURS", "10")))
+except ValueError:
+    RETENTION_HOURS = 10.0
+
 # Session-Cookie nur über HTTPS senden: auto (erkennt HTTPS), true, false
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "auto").lower()
 # IPs von Reverse-Proxys, deren X-Forwarded-For/-Proto vertraut wird (kommagetrennt, "*" = alle)

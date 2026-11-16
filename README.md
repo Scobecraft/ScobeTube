@@ -17,6 +17,9 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **SoundCloud-Modus:** Tracks, Sets und ganze Profile; Suche direkt in ScobeTube; Ton im Originalformat ohne Qualitätsverlust
 - **Spotify:** Songs, Alben, Playlists und Künstler (Top-Songs). Spotify-Audio ist DRM-geschützt und wird nicht von Spotify geladen. ScobeTube liest nur Titel, Interpret, Album und Cover, sucht denselben Song auf YouTube Music (Abgleich über Länge und Titel) und schreibt die Spotify-Infos samt Cover in die Datei. Wie bei spotDL kann der Abgleich in seltenen Fällen eine andere Version erwischen. Über den ↗-Knopf lässt sich das prüfen.
 - **Fortschritt im Browser-Tab:** Prozentanzeige im Titel und ein Tab-Icon, das sich beim Download füllt
+- **Auto-Löschung:** Heruntergeladene Dateien werden nach 10 Stunden automatisch gelöscht (einstellbar). An jedem Download steht, wie lange er noch bleibt.
+- **Statistik pro Benutzer:** Downloads und Datenmenge insgesamt sowie der aktuell belegte Speicher, für Admins von allen Benutzern
+- **Live-Systemmonitor:** CPU, RAM und Speicher mit Verlauf der letzten 3 Minuten, dazu Load, Uptime und der RAM-Verbrauch von ScobeTube (sichtbar für Admins und Benutzer mit dem Recht „Einstellungen“)
 - **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
 - **Login mit Benutzerkonten und Rechten:** Der Admin legt Konten an und vergibt Rechte einzeln
@@ -65,6 +68,7 @@ services:
 | `PLAYLIST_SUBFOLDER` | `true` | Playlists in einen eigenen Unterordner speichern |
 | `PLAYLIST_LIMIT` | `0` | Maximale Anzahl Videos pro Playlist (`0` = alle) |
 | `WINDOWS_FILENAMES` | `true` | Dateinamen Windows-/SMB-kompatibel machen |
+| `RETENTION_HOURS` | `10` | Dateien nach so vielen Stunden automatisch löschen (`0` = nie) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | – | Optional: legt beim allerersten Start automatisch den Admin an (statt über die Einrichtungsseite) |
 | `TRUSTED_PROXIES` | `127.0.0.1` | IPs von Reverse-Proxys, deren `X-Forwarded-*`-Header vertraut wird |
 | `COOKIE_SECURE` | `auto` | Login-Cookie nur über HTTPS senden (`auto` erkennt HTTPS selbst) |
@@ -85,7 +89,7 @@ Als Admin öffnest du oben rechts dein Profil und gehst auf **Benutzer & Rechte*
 | Eigene Einträge & Dateien löschen | Eigene Downloads aus der Liste und von der Platte entfernen |
 | Downloads aller Benutzer sehen & verwalten | Sonst sieht jeder nur seine eigenen Downloads |
 | Speicher leeren | Der Knopf „Alle Downloads löschen“ |
-| Einstellungen | yt-dlp-Update, Cookies |
+| Einstellungen | yt-dlp-Update, Cookies, Systemmonitor (CPU, RAM, Speicher) |
 | Administrator | Alle Rechte und die Benutzerverwaltung |
 
 **Sicherheit**

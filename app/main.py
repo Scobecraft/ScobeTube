@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config
+from .sysmon import sysmon
 from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, users
 from .downloader import (AUDIO_FORMATS, AUDIO_QUALITIES, SEARCH_PREFIX, VIDEO_FORMATS, VIDEO_QUALITIES, Item,
                          Options, manager)
@@ -37,14 +39,38 @@ _hash_slots = asyncio.Semaphore(2)
 _setup_lock = asyncio.Lock()
 
 
+STARTED_AT = time.time()
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(manager.cleanup_expired)
+        except Exception as e:  # noqa: BLE001
+            log.error("Auto-Löschung fehlgeschlagen: %s", e)
+        await asyncio.sleep(300)
+
+
+def _host_uptime() -> float | None:
+    try:
+        return float(Path("/proc/uptime").read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     users.load()
     manager.start(asyncio.get_running_loop())
-    log.info("ScobeTube %s gestartet – yt-dlp %s – Downloads: %s",
-             config.APP_VERSION, yt_dlp.version.__version__, config.DOWNLOAD_DIR)
+    cleaner = asyncio.create_task(_cleanup_loop())
+    monitor = asyncio.create_task(sysmon.run())
+    log.info("ScobeTube %s gestartet – yt-dlp %s – Downloads: %s – Auto-Löschung: %s",
+             config.APP_VERSION, yt_dlp.version.__version__, config.DOWNLOAD_DIR,
+             f"{config.RETENTION_HOURS:g} Std." if config.RETENTION_HOURS else "aus")
     yield
+    cleaner.cancel()
+    monitor.cancel()
     manager.save()
 
 
@@ -174,8 +200,12 @@ async def _json(request: Request) -> dict[str, Any]:
     return data
 
 
+_EMPTY_USAGE = {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0}
+
+
 def _me(user: User) -> dict[str, Any]:
-    return {**user.public(), "effective": user.effective_permissions()}
+    usage = manager.usage().get(user.username.lower(), _EMPTY_USAGE)
+    return {**user.public(), "effective": user.effective_permissions(), "usage": usage}
 
 
 # ------------------------------------------------------------ anmeldung
@@ -271,7 +301,16 @@ async def change_password(request: Request):
 @api.get("/users")
 async def list_users(request: Request):
     _need(request, "admin")
-    return {"users": [u.public() for u in users.list()], "permissions": PERMISSIONS}
+    usage = manager.usage()
+    rows = [{**u.public(), "usage": usage.get(u.username.lower(), _EMPTY_USAGE)} for u in users.list()]
+    known = {u.username.lower() for u in users.list()}
+    # Downloads gelöschter Konten trotzdem mitzählen
+    deleted = {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0}
+    for name, u in usage.items():
+        if name not in known:
+            for k in deleted:
+                deleted[k] += u.get(k, 0)
+    return {"users": rows, "permissions": PERMISSIONS, "deleted_users": deleted}
 
 
 @api.post("/users")
@@ -335,6 +374,10 @@ async def info(request: Request):
         "ytdlp_channel": config.YTDLP_CHANNEL,
         "cookies": config.COOKIES_FILE.is_file(),
         "max_concurrent": config.MAX_CONCURRENT,
+        "retention_hours": config.RETENTION_HOURS,
+        "started_at": STARTED_AT,
+        "server_time": time.time(),
+        "host_uptime": _host_uptime(),
         "formats": {
             "video": {"formats": VIDEO_FORMATS, "qualities": VIDEO_QUALITIES},
             "audio": {"formats": AUDIO_FORMATS, "qualities": AUDIO_QUALITIES},
@@ -512,6 +555,15 @@ def _dir_size(root: Path) -> tuple[int, int]:
         except OSError:
             pass
     return size, files
+
+
+@api.get("/system")
+async def system(request: Request):
+    user = _user(request)
+    if not (user.has("settings") or user.is_admin):
+        raise HTTPException(403, "Dafür fehlt dir das Recht „Einstellungen“")
+    return {**sysmon.snapshot(), "started_at": STARTED_AT, "host_uptime": _host_uptime(),
+            "active": manager.active_count()}
 
 
 @api.get("/storage")

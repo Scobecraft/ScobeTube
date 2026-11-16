@@ -15,6 +15,7 @@ services:
       - PGID=1000
       - TZ=Europe/Berlin
       - MAX_CONCURRENT_DOWNLOADS=3
+      - RETENTION_HOURS=10        # Dateien nach 10 Std. automatisch löschen (0 = nie)
       # Hinter einem Reverse-Proxy (nginx, Traefik, Caddy …) dessen IP eintragen,
       # damit Login-Schutz und HTTPS-Erkennung die echte Besucher-IP sehen:
       # - TRUSTED_PROXIES=172.17.0.1

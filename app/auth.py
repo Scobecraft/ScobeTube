@@ -25,7 +25,7 @@ PERMISSIONS: dict[str, str] = {
     "delete": "Eigene Einträge & Dateien löschen",
     "view_all": "Downloads aller Benutzer sehen & verwalten",
     "storage": "Speicher leeren (alle Downloads löschen)",
-    "settings": "Einstellungen (yt-dlp-Update, Cookies)",
+    "settings": "Einstellungen (yt-dlp-Update, Cookies, Systemmonitor)",
     "admin": "Administrator (alle Rechte + Benutzerverwaltung)",
 }
 DEFAULT_PERMISSIONS = ["download", "files", "delete"]

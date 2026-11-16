@@ -42,6 +42,7 @@
     quality: store("quality") || {},
     filter: store("filter") || "all",
     items: new Map(),
+    info: null, clockOffset: 0,
   };
   const can = (p) => !!state.me && state.me.effective.includes(p);
 
@@ -57,6 +58,24 @@
     s = Math.round(s);
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+  };
+  const now = () => Date.now() / 1000 + state.clockOffset;
+  const expiresIn = (it) => {
+    const h = state.info && state.info.retention_hours;
+    if (!h || !it.finished) return null;
+    return it.finished + h * 3600 - now();
+  };
+  const fmtLeft = (s) => {
+    s = Math.max(0, Math.round(s));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h ? `${h} Std. ${m} Min.` : m ? `${m} Min.` : "< 1 Min.";
+  };
+  const fmtUptime = (s) => {
+    s = Math.max(0, Math.floor(s));
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (d) return `${d} T ${h} Std. ${m} Min.`;
+    if (h) return `${h} Std. ${m} Min.`;
+    return `${m} Min. ${String(sec).padStart(2, "0")} s`;
   };
   const fmtDate = (t) => t ? new Date(t * 1000).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "nie";
   const qLabel = (kind, q) => q === "best" ? "Beste" : kind === "video" ? (q === "2160" ? "4K" : q === "1440" ? "2K" : q + "p") : q + "k";
@@ -404,6 +423,8 @@
     else if (it.status === "preparing") add("", "Hole Infos…");
     else if (it.status === "done") {
       if (it.filesize) add(fmtBytes(it.filesize));
+      const left = expiresIn(it);
+      if (left != null) { add("", `🗑 ${left > 0 ? "löscht sich in " + fmtLeft(left) : "wird gleich gelöscht"}`); parts[parts.length - 1].className = "expires" + (left < 3600 ? " soon" : ""); }
       if (it.filename) { add("", "📁 " + (it.filename.length > 60 ? "…" + it.filename.slice(-60) : it.filename)); parts[parts.length - 1].title = it.filename; }
     }
     stats.replaceChildren(...parts);
@@ -647,6 +668,10 @@
   async function loadInfo() {
     try {
       const i = await api("info");
+      state.info = i;
+      state.clockOffset = i.server_time - Date.now() / 1000;
+      if (i.retention_hours) { $("#retentionInfo").hidden = false; $("#retentionHours").textContent = String(i.retention_hours).replace(".", ","); }
+      tickUptime(); refreshDone();
       $("#ytdlpVersion").textContent = i.ytdlp;
       $("#ytdlpVersion2").textContent = i.ytdlp + (i.ytdlp_channel === "nightly" ? " (nightly)" : "");
       $("#appVersion").textContent = "v" + i.version;
@@ -654,6 +679,18 @@
       $("#cookieDelete").hidden = !i.cookies;
     } catch { /* egal */ }
   }
+  function tickUptime() {
+    const i = state.info; if (!i) return;
+    const host = i.host_uptime != null ? i.host_uptime + (now() - i.server_time) : null;
+    const app = now() - i.started_at;
+    $("#uptime").textContent = fmtUptime(host != null ? host : app);
+    $("#uptimeInfo").title = `Server läuft seit ${fmtUptime(host ?? app)} · ScobeTube läuft seit ${fmtUptime(app)}`;
+  }
+  setInterval(tickUptime, 1000);
+  // Restzeiten der fertigen Downloads jede Minute auffrischen
+  function refreshDone() { for (const it of state.items.values()) if (it.status === "done") { const n = list.querySelector(`[data-id="${it.id}"]`); if (n) updateNode(n, it, it); } }
+  setInterval(refreshDone, 60000);
+
   async function loadStorage() {
     try {
       const st = await api("storage");
@@ -709,7 +746,16 @@
   $$("#bmVideo, #bmAudio").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); toast("In die Lesezeichenleiste ziehen 😉"); }));
 
   // Benutzermenü
-  $("#userBtn").addEventListener("click", () => { const m = $("#userMenu"); m.hidden = !m.hidden; });
+  const statBox = (value, label) => { const d = el("div", "stat"); d.append(el("b", "", value), el("span", "", label)); return d; };
+  $("#userBtn").addEventListener("click", async () => {
+    const m = $("#userMenu"); m.hidden = !m.hidden;
+    if (m.hidden) return;
+    try {
+      const me = (await api("auth/me")).user, u = me.usage;
+      $("#myStats").replaceChildren(statBox(String(u.downloads), "Downloads"), statBox(fmtBytes(u.bytes_total) || "0 B", "Geladen"),
+        statBox(String(u.files_now), "Dateien jetzt"), statBox(fmtBytes(u.bytes_now) || "0 B", "Belegt"));
+    } catch { /* egal */ }
+  });
   $("#menuLogout").addEventListener("click", async () => { try { await api("auth/logout", { method: "POST" }); } finally { location.href = "login"; } });
   $("#menuPassword").addEventListener("click", () => { $("#pwForm").reset(); $("#pwMsg").textContent = ""; $("#pwStrength").dataset.s = "0"; openModal("pwModal"); setTimeout(() => $("#pwCurrent").focus(), 100); });
   $("#menuUsers").addEventListener("click", () => { openModal("usersModal"); loadUsers(); });
@@ -763,12 +809,17 @@
     try {
       const data = await api("users");
       state.permLabels = data.permissions;
-      box.replaceChildren(...data.users.map((u, i) => userCard(u, i)));
+      const maxNow = Math.max(1, ...data.users.map((u) => u.usage.bytes_now));
+      box.replaceChildren(...data.users.map((u, i) => userCard(u, i, maxNow)));
+      const sum = (k) => data.users.reduce((a, u) => a + (u.usage[k] || 0), 0) + (data.deleted_users[k] || 0);
+      const tiles = [[String(sum("downloads")), "Downloads gesamt"], [fmtBytes(sum("bytes_total")) || "0 B", "Insgesamt geladen"],
+        [String(sum("files_now")), "Dateien auf dem Server"], [fmtBytes(sum("bytes_now")) || "0 B", "Belegt jetzt"]];
+      $("#usersTotals").replaceChildren(...tiles.map(([v, l], i) => { const t = statBox(v, l); t.style.setProperty("--i", i); if (i === 3) t.classList.add("hot"); return t; }));
       permGrid($("#nuPerms"), ["download", "files", "delete"]);
     } catch (err) { toast(err.message, "error"); }
   }
 
-  function userCard(u, i) {
+  function userCard(u, i, maxNow = 1) {
     const me = u.username.toLowerCase() === state.me.username.toLowerCase();
     const card = el("div", "u-card" + (u.disabled ? " disabled" : "")); card.style.setProperty("--i", i);
     const top = el("div", "u-top");
@@ -782,6 +833,12 @@
     edit.addEventListener("click", () => card.classList.toggle("open"));
     acts.appendChild(edit);
     top.append(el("span", "avatar", u.username.slice(0, 2).toUpperCase()), name, acts);
+    const us = u.usage || {};
+    const stats = el("div", "u-stats");
+    stats.append(statBox(String(us.downloads || 0), "Downloads"), statBox(fmtBytes(us.bytes_total) || "0 B", "Insgesamt geladen"),
+      statBox(String(us.files_now || 0), "Dateien jetzt"), statBox(fmtBytes(us.bytes_now) || "0 B", "Belegt jetzt"));
+    const bar = el("div", "u-bar"); const fill = el("i"); bar.appendChild(fill); stats.appendChild(bar);
+    requestAnimationFrame(() => requestAnimationFrame(() => { fill.style.width = ((us.bytes_now || 0) / maxNow * 100) + "%"; }));
 
     const panel = el("div", "u-perms");
     panel.appendChild(el("span", "label", "Rechte"));
@@ -818,7 +875,7 @@
       row.append(lock, del);
     }
     panel.appendChild(row);
-    card.append(top, panel);
+    card.append(top, stats, panel);
     return card;
   }
 
@@ -834,6 +891,63 @@
     } catch (err) { msg.textContent = err.message; }
     finally { btn.classList.remove("busy"); }
   });
+
+  // -------------------------------------------------------- systemmonitor
+  const sysPanel = $("#sysPanel");
+  let sysTimer = null;
+  const pctFmt = (v) => v == null ? "–" : Math.round(v);
+  function setGauge(key, value) {
+    const g = $(`.gauge[data-key="${key}"]`, sysPanel);
+    const v = value == null ? 0 : value;
+    $(".g-val", g).style.strokeDashoffset = String(314.16 * (1 - v / 100));
+    const num = $(".g-num", g);
+    num.replaceChildren(document.createTextNode(pctFmt(value)), el("small", "", value == null ? "" : "%"));
+    g.classList.toggle("warn", v >= 75 && v < 90);
+    g.classList.toggle("crit", v >= 90);
+  }
+  function sparkPath(points, key, area) {
+    if (points.length < 2) return "";
+    const n = 90, step = 300 / (n - 1), off = (n - points.length) * step;
+    let d = points.map((p, i) => `${i ? "L" : "M"}${(off + i * step).toFixed(1)},${(100 - Math.min(100, p[key])).toFixed(1)}`).join(" ");
+    if (area) d += ` L${(off + (points.length - 1) * step).toFixed(1)},100 L${off.toFixed(1)},100 Z`;
+    return d;
+  }
+  async function pollSystem() {
+    if (document.hidden || sysPanel.classList.contains("collapsed")) return;
+    try {
+      const s = await api("system");
+      setGauge("cpu", s.cpu); setGauge("mem", s.mem); setGauge("disk", s.disk);
+      $("#cpuSub").textContent = s.cores ? `${s.cores} Kerne` : "";
+      $("#memSub").textContent = s.mem_total ? `${fmtBytes(s.mem_used)} / ${fmtBytes(s.mem_total)}` : "";
+      $("#diskSub").textContent = s.disk_total ? `${fmtBytes(s.disk_used)} / ${fmtBytes(s.disk_total)}` : "";
+      $(".s-cpu", sysPanel).setAttribute("d", sparkPath(s.history, "cpu"));
+      $(".s-mem", sysPanel).setAttribute("d", sparkPath(s.history, "mem"));
+      $(".s-mem-area", sysPanel).setAttribute("d", sparkPath(s.history, "mem", true));
+      const meta = [];
+      const m = (label, value) => { const sp = el("span", "", label + " "); sp.appendChild(el("b", "", value)); meta.push(sp); };
+      if (s.load) m("Load", s.load.join(" · "));
+      if (s.app_rss) m("ScobeTube-RAM", fmtBytes(s.app_rss));
+      if (s.swap_total) m("Swap", `${fmtBytes(s.swap_used)} / ${fmtBytes(s.swap_total)}`);
+      m("Aktive Downloads", String(s.active));
+      $("#sysMeta").replaceChildren(...meta);
+    } catch (err) {
+      if (/Recht/.test(err.message)) { sysPanel.hidden = true; clearInterval(sysTimer); }
+    }
+  }
+  $("#sysToggle").addEventListener("click", (e) => {
+    const collapsed = sysPanel.classList.toggle("collapsed");
+    e.currentTarget.textContent = collapsed ? "Ausklappen" : "Einklappen";
+    e.currentTarget.setAttribute("aria-expanded", String(!collapsed));
+    store("sysCollapsed", collapsed);
+    if (!collapsed) pollSystem();
+  });
+  function startSystem() {
+    sysPanel.hidden = false;
+    if (store("sysCollapsed")) { sysPanel.classList.add("collapsed"); $("#sysToggle").textContent = "Ausklappen"; }
+    pollSystem();
+    sysTimer = setInterval(pollSystem, 2000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) pollSystem(); });
+  }
 
   // --------------------------------------------------------------- start
   async function boot() {
@@ -868,6 +982,7 @@
     autosize(); updateMode();
     document.fonts && document.fonts.ready.then(moveKindSlider);
     connect(); loadInfo();
+    if (can("settings")) startSystem();
     if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
   }
   boot();
