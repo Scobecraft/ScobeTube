@@ -417,6 +417,23 @@ code { font-size: .85em; padding: .1em .4em; border-radius: 6px; background: var
 .btn.busy::before { content: ""; width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: rot .7s linear infinite; }
 @keyframes rot { to { transform: rotate(360deg); } }
 
+/* ---------- Speicher ---------- */
+.setting.storage { align-items: flex-end; }
+.setting.storage .setting-text { flex: 1; min-width: 0; }
+.storage-bar { display: flex; height: 10px; margin-top: 12px; border-radius: 99px; overflow: hidden; background: var(--surface-3); }
+.storage-bar span { height: 100%; width: 0; transition: width 1s var(--ease); }
+.seg-dl { background: var(--grad); box-shadow: 0 0 12px rgba(236,72,153,.6); }
+.seg-other { background: rgba(255,255,255,.22); }
+.storage-bar.warn .seg-dl { background: linear-gradient(90deg, var(--orange), var(--red)); }
+.storage-legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
+.storage-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 3px; margin-right: 6px; }
+.lg-dl { background: var(--pink); } .lg-other { background: rgba(255,255,255,.35); } .lg-free { background: var(--surface-3); }
+.btn.danger.confirm { background: var(--red); color: #fff; border-color: var(--red); animation: wiggle .45s var(--ease); box-shadow: 0 0 0 4px rgba(255,84,112,.2); }
+@keyframes wiggle { 20% { transform: rotate(-3deg); } 40% { transform: rotate(3deg); } 60% { transform: rotate(-2deg); } 80% { transform: rotate(1deg); } }
+.foot-link { color: var(--text-3); font-size: 13px; padding: 0; transition: color .2s; }
+.foot-link:hover { color: var(--text); }
+.foot-link.warn { color: var(--orange); }
+
 /* ---------- Popover ---------- */
 .popover { position: fixed; z-index: 45; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 200px; background: rgba(22,18,36,.95); animation: popIn .3s var(--spring); }
 .popover p { margin: 0 0 4px; font-weight: 600; font-size: 14px; }
@@ -455,7 +472,7 @@ code { font-size: .85em; padding: .1em .4em; border-radius: 6px; background: var
   .tabs button { padding: 8px 10px; flex: 1; justify-content: center; }
   .list-head { flex-direction: column; align-items: stretch; }
   .list-actions { align-self: flex-end; }
-  .setting { flex-direction: column; align-items: flex-start; }
+  .setting, .setting.storage { flex-direction: column; align-items: stretch; }
   .brand-text { font-size: 19px; }
   .pill .conn-text { display: none; }
   .pill { padding: 0 12px; }

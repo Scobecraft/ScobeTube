@@ -504,6 +504,36 @@ class Manager:
             return None
         return p
 
+    def purge_downloads(self) -> tuple[int, int]:
+        """Löscht alle Dateien im Download-Ordner und entfernt fertige Einträge.
+
+        Laufende Downloads schreiben in einen separaten Temp-Ordner und bleiben unberührt.
+        Gibt (Anzahl Dateien, freigegebene Bytes) zurück.
+        """
+        active_files = {self.file_path(i) for i in self.items.values() if i.status in ACTIVE}
+        count = freed = 0
+        root = config.DOWNLOAD_DIR
+        for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            try:
+                if path.is_symlink() or path.is_file():
+                    if path in active_files:
+                        continue
+                    size = path.lstat().st_size
+                    path.unlink()
+                    count += 1
+                    freed += size
+                elif path.is_dir() and not any(path.iterdir()):
+                    path.rmdir()
+            except OSError as e:
+                log.warning("Konnte %s nicht löschen: %s", path, e)
+        for item_id in [i.id for i in self.items.values() if i.status in FINISHED]:
+            with self.lock:
+                self.items.pop(item_id, None)
+            self.emit("removed", {"id": item_id})
+        self._schedule_save()
+        log.info("Speicher geleert: %d Dateien, %d Bytes", count, freed)
+        return count, freed
+
     def active_count(self) -> int:
         return sum(1 for i in self.items.values() if i.status in ("downloading", "processing"))
 

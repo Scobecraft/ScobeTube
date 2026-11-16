@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
 from contextlib import asynccontextmanager
@@ -208,6 +209,32 @@ async def upload_cookies(file: UploadFile):
 async def delete_cookies():
     config.COOKIES_FILE.unlink(missing_ok=True)
     return {"ok": True}
+
+
+def _dir_size(root: Path) -> tuple[int, int]:
+    size = files = 0
+    for p in root.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                size += p.stat().st_size
+                files += 1
+        except OSError:
+            pass
+    return size, files
+
+
+@api.get("/storage")
+async def storage():
+    used, files = await asyncio.to_thread(_dir_size, config.DOWNLOAD_DIR)
+    disk = shutil.disk_usage(config.DOWNLOAD_DIR)
+    return {"downloads": used, "files": files, "disk_total": disk.total, "disk_free": disk.free,
+            "disk_used": disk.total - disk.free}
+
+
+@api.post("/storage/purge")
+async def purge():
+    count, freed = await asyncio.to_thread(manager.purge_downloads)
+    return {"files": count, "freed": freed}
 
 
 _updating = False

@@ -446,7 +446,7 @@
 
   // -------------------------------------------------------------- settings
   const modal = $("#settings");
-  const openModal = () => { modal.classList.add("open"); modal.setAttribute("aria-hidden", "false"); loadInfo(); };
+  const openModal = () => { modal.classList.add("open"); modal.setAttribute("aria-hidden", "false"); loadInfo(); loadStorage(); };
   const closeModal = () => { modal.classList.remove("open"); modal.setAttribute("aria-hidden", "true"); };
   $("#settingsBtn").addEventListener("click", openModal);
   modal.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeModal(); });
@@ -463,6 +463,49 @@
       $("#cookieDelete").hidden = !i.cookies;
     } catch { /* ignorieren */ }
   }
+
+  // Speicher
+  async function loadStorage() {
+    try {
+      const st = await api("storage");
+      const pct = (v) => st.disk_total ? Math.max(0, Math.min(100, v / st.disk_total * 100)) : 0;
+      const usedPct = pct(st.disk_used);
+      const dlPct = st.downloads > 0 ? Math.max(pct(st.downloads), 1) : 0;
+      requestAnimationFrame(() => {
+        $("#barDl").style.width = dlPct + "%";
+        $("#barOther").style.width = Math.max(0, usedPct - dlPct) + "%";
+      });
+      const warn = usedPct > 90;
+      $(".storage-bar").classList.toggle("warn", warn);
+      $("#storageText").innerHTML = `Downloads: <b>${fmtBytes(st.downloads)}</b> in ${st.files} ${st.files === 1 ? "Datei" : "Dateien"} · ` +
+        `Frei: <b>${fmtBytes(st.disk_free)}</b> von ${fmtBytes(st.disk_total)}` + (warn ? " · ⚠️ fast voll" : "");
+      $("#footStorageText").textContent = `${fmtBytes(st.disk_free)} frei`;
+      $("#footStorage").classList.toggle("warn", warn);
+      $("#purgeBtn").disabled = st.files === 0;
+      $("#purgeBtn").style.opacity = st.files === 0 ? .5 : "";
+    } catch { /* ignorieren */ }
+  }
+  $("#footStorage").addEventListener("click", openModal);
+
+  let purgeTimer = null;
+  $("#purgeBtn").addEventListener("click", async (e) => {
+    const btn = e.currentTarget, label = $("span", btn);
+    if (!btn.classList.contains("confirm")) {
+      btn.classList.add("confirm");
+      label.textContent = "Wirklich alles löschen?";
+      purgeTimer = setTimeout(() => { btn.classList.remove("confirm"); label.textContent = "Alle Downloads löschen"; }, 4000);
+      return;
+    }
+    clearTimeout(purgeTimer);
+    btn.classList.remove("confirm"); btn.classList.add("busy"); label.textContent = "Lösche…";
+    try {
+      const r = await api("storage/purge", { method: "POST" });
+      toast(`${r.files} ${r.files === 1 ? "Datei" : "Dateien"} gelöscht – ${fmtBytes(r.freed)} frei geworden`, "success", 5000);
+      const rr = btn.getBoundingClientRect();
+      confetti(rr.left + rr.width / 2, rr.top + rr.height / 2, 40);
+    } catch (err) { toast(err.message, "error"); }
+    finally { btn.classList.remove("busy"); label.textContent = "Alle Downloads löschen"; loadStorage(); }
+  });
 
   $("#updateBtn").addEventListener("click", async (e) => {
     const btn = e.currentTarget; btn.classList.add("busy"); $("span", btn).textContent = "Lädt…";
@@ -506,5 +549,7 @@
   document.fonts && document.fonts.ready.then(() => { moveIndicator(seg, segInd); moveIndicator(tabs, tabInd); });
   connect();
   loadInfo();
+  loadStorage();
+  setInterval(loadStorage, 60000);
   autosize();
 })();

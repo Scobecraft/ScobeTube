@@ -117,6 +117,8 @@
       <span>ScobeTube <span id="appVersion"></span></span>
       <span class="sep">•</span>
       <span>yt-dlp <span id="ytdlpVersion">…</span></span>
+      <span class="sep">•</span>
+      <button class="foot-link" id="footStorage" title="Speicher verwalten">💾 <span id="footStorageText">…</span></button>
     </footer>
   </div>
 
@@ -135,6 +137,22 @@
       <div class="modal-head">
         <h2 id="settingsTitle">Einstellungen</h2>
         <button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <div class="setting storage">
+        <div class="setting-text">
+          <h4>Speicher</h4>
+          <p id="storageText">Wird berechnet…</p>
+          <div class="storage-bar" title="Belegung der Festplatte">
+            <span class="seg-dl" id="barDl"></span><span class="seg-other" id="barOther"></span>
+          </div>
+          <div class="storage-legend">
+            <span><i class="lg-dl"></i>Downloads</span>
+            <span><i class="lg-other"></i>Sonstiges</span>
+            <span><i class="lg-free"></i>Frei</span>
+          </div>
+        </div>
+        <button class="btn danger" id="purgeBtn"><span>Alle Downloads löschen</span></button>
       </div>
 
       <div class="setting">
