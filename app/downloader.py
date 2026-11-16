@@ -22,7 +22,7 @@ from . import config
 log = logging.getLogger("scobetube")
 
 VIDEO_FORMATS = ("mp4", "mkv", "webm")
-AUDIO_FORMATS = ("mp3", "m4a", "opus", "flac", "wav")
+AUDIO_FORMATS = ("mp3", "original", "m4a", "opus", "flac", "wav")
 VIDEO_QUALITIES = ("best", "2160", "1440", "1080", "720", "480", "360")
 AUDIO_QUALITIES = ("best", "320", "256", "192", "128")
 
@@ -82,6 +82,8 @@ class Item:
     error: str | None = None
     created: float = field(default_factory=time.time)
     finished: float | None = None
+    owner: str | None = None      # Benutzername
+    source: str | None = None     # z. B. "youtube", "soundcloud"
 
     def public(self) -> dict[str, Any]:
         d = asdict(self)
@@ -191,9 +193,9 @@ class Manager:
         if persist:
             self._schedule_save()
 
-    def snapshot(self) -> list[dict[str, Any]]:
+    def snapshot(self, visible=None) -> list[dict[str, Any]]:
         with self.lock:
-            return [i.public() for i in self.items.values()]
+            return [i.public() for i in self.items.values() if visible is None or visible(i)]
 
     # --------------------------------------------------------------- yt-dlp
     def _base_opts(self) -> dict[str, Any]:
@@ -222,13 +224,15 @@ class Manager:
 
         if o.kind == "audio":
             opts["format"] = "bestaudio/best"
-            pp: dict[str, Any] = {"key": "FFmpegExtractAudio", "preferredcodec": o.format}
+            # "original" = Tonspur ohne Neukodierung übernehmen (z. B. SoundCloud-MP3/Opus)
+            codec = "best" if o.format == "original" else o.format
+            pp: dict[str, Any] = {"key": "FFmpegExtractAudio", "preferredcodec": codec}
             if o.format in ("mp3", "m4a", "opus") and o.quality != "best":
                 pp["preferredquality"] = o.quality
             elif o.format == "mp3":
                 pp["preferredquality"] = "0"  # beste VBR-Qualität
             pps.append(pp)
-            thumb_ok = o.format in ("mp3", "m4a", "opus", "flac")
+            thumb_ok = o.format in ("mp3", "m4a", "opus", "flac", "original")
         else:
             sort = []
             if o.quality != "best":
@@ -266,10 +270,10 @@ class Manager:
         return opts
 
     # -------------------------------------------------------------- resolve
-    def add(self, urls: list[str], options: Options) -> list[Item]:
+    def add(self, urls: list[str], options: Options, owner: str | None = None) -> list[Item]:
         created = []
         for url in urls:
-            item = Item(url=url, options=options)
+            item = Item(url=url, options=options, owner=owner)
             with self.lock:
                 self.items[item.id] = item
             self.emit("added", item.public())
@@ -306,16 +310,17 @@ class Manager:
             # Platzhalter entfernen, Einträge einzeln einreihen
             with self.lock:
                 self.items.pop(item.id, None)
-            self.emit("removed", {"id": item.id})
+            self.emit("removed", {"id": item.id, "owner": item.owner})
             for e in entries:
                 url = e.get("webpage_url") or e.get("url")
                 if not url:
                     continue
-                child = Item(url=url, options=item.options, playlist=ptitle)
+                child = Item(url=url, options=item.options, playlist=ptitle, owner=item.owner)
                 child.title = e.get("title") or ""
                 child.thumbnail = _thumb(e)
                 child.duration = e.get("duration")
                 child.uploader = e.get("uploader") or e.get("channel")
+                child.source = _source(e) or _source(info)
                 with self.lock:
                     self.items[child.id] = child
                 self.emit("added", child.public())
@@ -327,6 +332,7 @@ class Manager:
         item.thumbnail = _thumb(info)
         item.duration = info.get("duration")
         item.uploader = info.get("uploader") or info.get("channel")
+        item.source = _source(info)
         item.url = info.get("webpage_url") or item.url
         self._enqueue(item)
 
@@ -474,7 +480,7 @@ class Manager:
             self.delete_file(item)
         with self.lock:
             self.items.pop(item_id, None)
-        self.emit("removed", {"id": item_id})
+        self.emit("removed", {"id": item_id, "owner": item.owner})
         self._schedule_save()
         return True
 
@@ -489,9 +495,9 @@ class Manager:
             except OSError as e:
                 log.warning("Datei konnte nicht gelöscht werden: %s", e)
 
-    def clear(self, which: str, delete_files: bool) -> int:
+    def clear(self, which: str, delete_files: bool, visible=None) -> int:
         statuses = {"done": ("done",), "failed": ("error", "cancelled"), "finished": FINISHED}.get(which, ())
-        ids = [i.id for i in self.items.values() if i.status in statuses]
+        ids = [i.id for i in self.items.values() if i.status in statuses and (visible is None or visible(i))]
         for i in ids:
             self.remove(i, delete_files)
         return len(ids)
@@ -526,16 +532,46 @@ class Manager:
                     path.rmdir()
             except OSError as e:
                 log.warning("Konnte %s nicht löschen: %s", path, e)
-        for item_id in [i.id for i in self.items.values() if i.status in FINISHED]:
+        for item in [i for i in self.items.values() if i.status in FINISHED]:
             with self.lock:
-                self.items.pop(item_id, None)
-            self.emit("removed", {"id": item_id})
+                self.items.pop(item.id, None)
+            self.emit("removed", {"id": item.id, "owner": item.owner})
         self._schedule_save()
         log.info("Speicher geleert: %d Dateien, %d Bytes", count, freed)
         return count, freed
 
     def active_count(self) -> int:
         return sum(1 for i in self.items.values() if i.status in ("downloading", "processing"))
+
+
+def _source(info: dict[str, Any]) -> str | None:
+    key = str(info.get("extractor_key") or info.get("ie_key") or info.get("extractor") or "").lower()
+    for name in ("soundcloud", "youtube", "vimeo", "twitch", "tiktok", "instagram", "twitter", "bandcamp",
+                 "mixcloud", "reddit", "facebook", "dailymotion"):
+        if name in key:
+            return name
+    return key.split(":")[0] or None
+
+
+SEARCH_PREFIX = {"soundcloud": "scsearch", "youtube": "ytsearch"}
+
+
+def search(source: str, query: str, limit: int = 12) -> list[dict[str, Any]]:
+    prefix = SEARCH_PREFIX[source]
+    opts = manager._base_opts()
+    opts.update({"extract_flat": "in_playlist", "skip_download": True})
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"{prefix}{limit}:{query}", download=False)
+    out = []
+    for e in (info or {}).get("entries") or []:
+        if not e:
+            continue
+        url = e.get("webpage_url") or e.get("url")
+        if not url:
+            continue
+        out.append({"url": url, "title": e.get("title") or url, "uploader": e.get("uploader") or e.get("channel"),
+                    "duration": e.get("duration"), "thumbnail": _thumb(e), "source": source})
+    return out
 
 
 def _thumb(info: dict[str, Any]) -> str | None:

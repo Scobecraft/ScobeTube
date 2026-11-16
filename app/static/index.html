@@ -4,226 +4,249 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ScobeTube</title>
-  <meta name="theme-color" content="#07060d">
+  <meta name="theme-color" content="#0b0b0c">
   <link rel="icon" href="static/icon.svg" type="image/svg+xml">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;800;900&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="static/style.css">
 </head>
-<body>
-  <div class="bg" aria-hidden="true">
-    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
-    <div class="grid"></div>
-  </div>
-  <canvas id="confetti" aria-hidden="true"></canvas>
+<body data-source="all" data-kind="video">
+  <div class="grain" aria-hidden="true"></div>
+  <div class="dots" aria-hidden="true"></div>
+  <div class="glow" aria-hidden="true"></div>
+  <div class="glow g2" aria-hidden="true"></div>
+  <canvas id="fx" aria-hidden="true"></canvas>
 
   <div class="app">
     <header class="top">
       <a class="brand" href="./">
-        <span class="logo">
-          <svg viewBox="0 0 24 24"><path d="M9 6.5v8.6l7-4.3z" fill="currentColor"/><path d="M7 18.5h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
-        </span>
-        <span class="brand-text">Scobe<span class="grad">Tube</span></span>
+        <span class="mark"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></span>
+        <span class="brand-text">SCOBE<i>//</i>TUBE</span>
       </a>
       <div class="top-right">
-        <div class="pill live" id="conn" title="Verbindung zum Server">
-          <span class="dot"></span><span class="conn-text">Verbinde…</span>
-        </div>
-        <button class="icon-btn" id="settingsBtn" aria-label="Einstellungen" title="Einstellungen">
-          <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        <div class="eq" title="Aktivität"><span></span><span></span><span></span><span></span><span></span></div>
+        <span class="conn" id="conn" title="Verbindung"></span>
+        <button class="icon-btn" id="settingsBtn" aria-label="Einstellungen" title="Einstellungen" hidden>
+          <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>
         </button>
+        <div class="user-wrap">
+          <button class="user-chip" id="userBtn" aria-haspopup="menu">
+            <span class="avatar" id="userAvatar">?</span><span class="user-name" id="userName"></span>
+          </button>
+          <div class="user-menu box" id="userMenu" role="menu" hidden>
+            <div class="who"><span class="label" id="userRole">Benutzer</span><b id="userMenuName"></b></div>
+            <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte</button>
+            <button id="menuPassword"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Passwort ändern</button>
+            <button id="menuLogout"><svg viewBox="0 0 24 24"><path d="M15 4h5v16h-5M10 8l-4 4 4 4M6 12h11"/></svg>Abmelden</button>
+          </div>
+        </div>
       </div>
     </header>
 
     <section class="hero">
-      <h1 class="headline reveal">Alles herunterladen.<br><span class="grad shine">Einfach so.</span></h1>
-      <p class="sub reveal" style="--d:.08s">YouTube, Playlists und über 1.000 weitere Seiten – als Video oder Musik, direkt auf deinen Server.</p>
+      <h1 class="mega" aria-label="ScobeTube"><span class="row" data-split>Scobe</span><span class="row r2" data-split>Tube</span></h1>
+      <div class="hero-side">
+        <span class="sticker"><span class="blink"></span>Self-hosted</span>
+        <p>Video &amp; Musik von YouTube, SoundCloud und 1.000+ Seiten – direkt auf deinen Server.</p>
+      </div>
+    </section>
 
-      <form class="composer glass reveal" id="addForm" style="--d:.16s" autocomplete="off">
-        <div class="input-row">
-          <div class="input-wrap">
-            <svg class="input-icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <textarea id="url" rows="1" placeholder="Link einfügen – oder mehrere, einer pro Zeile" spellcheck="false"></textarea>
-            <button type="button" class="paste-btn" id="pasteBtn" title="Aus Zwischenablage einfügen">Einfügen</button>
-          </div>
-          <button type="submit" class="go-btn" id="goBtn">
-            <span class="go-label">Laden</span>
-            <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
+    <div class="bands" aria-hidden="true">
+      <div class="band b2"><div class="track"><span>MP4</span><span>MP3</span><span>FLAC</span><span>4K</span><span>Playlists</span><span>Opus</span><span>MKV</span><span>Cover-Art</span></div><div class="track"><span>MP4</span><span>MP3</span><span>FLAC</span><span>4K</span><span>Playlists</span><span>Opus</span><span>MKV</span><span>Cover-Art</span></div></div>
+      <div class="band b1"><div class="track"><span>YouTube</span><span>SoundCloud</span><span>Vimeo</span><span>Twitch</span><span>TikTok</span><span>Bandcamp</span><span>Mixcloud</span><span>Instagram</span></div><div class="track"><span>YouTube</span><span>SoundCloud</span><span>Vimeo</span><span>Twitch</span><span>TikTok</span><span>Bandcamp</span><span>Mixcloud</span><span>Instagram</span></div></div>
+    </div>
+
+    <section class="deck box" id="deck" hidden>
+      <div class="deck-head">
+        <div class="src-switch" id="srcSwitch" data-pos="0">
+          <span class="slider"></span>
+          <button type="button" data-source="all" class="active">
+            <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14"/><path d="m10 9 5 3-5 3z"/></svg>Alles
+          </button>
+          <button type="button" data-source="soundcloud">
+            <svg viewBox="0 0 24 24"><path d="M7 18h11a4 4 0 0 0 .5-7.97A6 6 0 0 0 7 9.5M7 9.5V18M4 11v7M1.5 13v4"/></svg>SoundCloud
           </button>
         </div>
-
-        <div class="controls">
-          <div class="segmented" id="kindSeg" role="tablist">
-            <span class="seg-indicator"></span>
-            <button type="button" data-kind="video" class="active">
-              <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="14" height="14" rx="3"/><path d="m16.5 10 5-3v10l-5-3"/></svg>Video
-            </button>
-            <button type="button" data-kind="audio">
-              <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio
-            </button>
+      </div>
+      <form class="deck-body" id="addForm" autocomplete="off">
+        <div class="input-row">
+          <div class="field-wrap">
+            <svg class="lead" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <textarea id="url" rows="1" spellcheck="false"></textarea>
+            <span class="mode-hint" id="modeHint">Link</span>
+            <button type="button" class="paste" id="pasteBtn">Einfügen</button>
           </div>
+          <button type="submit" class="go" id="goBtn"><span class="go-text" id="goText">Laden</span><svg viewBox="0 0 24 24" id="goIcon"><path d="M12 4v13m0 0-5-5m5 5 5-5M5 21h14"/></svg></button>
+        </div>
+        <div class="sc-wave" id="scWave" aria-hidden="true"></div>
 
-          <div class="field">
-            <label>Format</label>
-            <div class="chips" id="formatChips"></div>
+        <div class="opts">
+          <div class="opt-group yt-only">
+            <span class="label">Typ</span>
+            <div class="kind" id="kindSeg">
+              <span class="slider"></span>
+              <button type="button" data-kind="video" class="active"><svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="14" height="14"/><path d="m16.5 10 5-3v10l-5-3"/></svg>Video</button>
+              <button type="button" data-kind="audio"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio</button>
+            </div>
           </div>
-          <div class="field">
-            <label>Qualität</label>
-            <div class="chips" id="qualityChips"></div>
+          <div class="opt-row">
+            <div class="opt-group"><span class="label">Format</span><div class="chips" id="formatChips"></div></div>
+            <div class="opt-group" id="qualityGroup"><span class="label">Qualität</span><div class="chips" id="qualityChips"></div></div>
           </div>
         </div>
 
         <div class="toggles">
-          <label class="toggle"><input type="checkbox" id="optPlaylist" checked><span class="track"><span class="knob"></span></span>Ganze Playlist</label>
-          <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="track"><span class="knob"></span></span>Cover &amp; Metadaten</label>
-          <label class="toggle video-only"><input type="checkbox" id="optSubs"><span class="track"><span class="knob"></span></span>Untertitel</label>
+          <label class="toggle"><input type="checkbox" id="optPlaylist" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="playlistLabel">Ganze Playlist</span></label>
+          <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Cover &amp; Metadaten</label>
+          <label class="toggle video-only yt-only"><input type="checkbox" id="optSubs"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Untertitel</label>
         </div>
       </form>
     </section>
 
-    <section class="list-section">
-      <div class="list-head">
-        <div class="tabs" id="tabs">
-          <span class="tab-indicator"></span>
-          <button data-filter="all" class="active">Alle <span class="count" data-count="all">0</span></button>
-          <button data-filter="active">Aktiv <span class="count" data-count="active">0</span></button>
-          <button data-filter="done">Fertig <span class="count" data-count="done">0</span></button>
-          <button data-filter="failed">Fehler <span class="count" data-count="failed">0</span></button>
-        </div>
-        <div class="list-actions">
-          <button class="ghost-btn" id="clearDone" title="Fertige Einträge aus der Liste entfernen (Dateien bleiben)">
-            <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg>Liste aufräumen
-          </button>
+    <section class="results" id="results" hidden>
+      <div class="results-head">
+        <h3 id="resultsTitle">Ergebnisse</h3>
+        <button class="btn ghost small" id="resultsClose">Schließen</button>
+      </div>
+      <div class="results-grid" id="resultsGrid"></div>
+    </section>
+
+    <section class="queue">
+      <div class="queue-head">
+        <h2 class="queue-title">Queue<sup id="activeSup"></sup></h2>
+        <div class="filters" id="filters">
+          <button data-filter="all" class="active">Alle <span class="n" data-count="all">0</span></button>
+          <button data-filter="active">Aktiv <span class="n" data-count="active">0</span></button>
+          <button data-filter="done">Fertig <span class="n" data-count="done">0</span></button>
+          <button data-filter="failed">Fehler <span class="n" data-count="failed">0</span></button>
+          <span class="sep"></span>
+          <button id="clearDone" title="Fertige Einträge aus der Liste entfernen (Dateien bleiben)" hidden>Aufräumen</button>
         </div>
       </div>
-
       <div class="list" id="list"></div>
-
       <div class="empty" id="empty">
-        <div class="empty-art">
-          <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
-          <div class="empty-icon">
-            <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
-          </div>
-        </div>
-        <h3>Noch nichts hier</h3>
-        <p>Füge oben einen Link ein oder zieh ihn einfach auf die Seite.</p>
+        <div class="arrow">↑</div>
+        <div class="big" id="emptyBig">Leer.</div>
+        <p id="emptyText">Link oben reinwerfen – oder einfach auf die Seite ziehen.</p>
       </div>
     </section>
 
     <footer class="foot">
-      <span>ScobeTube <span id="appVersion"></span></span>
-      <span class="sep">•</span>
-      <span>yt-dlp <span id="ytdlpVersion">…</span></span>
-      <span class="sep">•</span>
-      <button class="foot-link" id="footStorage" title="Speicher verwalten">💾 <span id="footStorageText">…</span></button>
+      <span>SCOBETUBE <span id="appVersion"></span> · yt-dlp <span id="ytdlpVersion">…</span></span>
+      <button id="footStorage" hidden>💾 <span id="footStorageText">…</span></button>
     </footer>
   </div>
 
-  <!-- Drag & Drop Overlay -->
-  <div class="drop-overlay" id="dropOverlay">
-    <div class="drop-box">
-      <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
-      <span>Link hier ablegen</span>
-    </div>
-  </div>
+  <div class="drop" id="drop"><div class="drop-box">Hier fallen lassen</div></div>
 
   <!-- Einstellungen -->
   <div class="modal" id="settings" aria-hidden="true">
-    <div class="modal-backdrop" data-close></div>
-    <div class="modal-card glass" role="dialog" aria-labelledby="settingsTitle">
-      <div class="modal-head">
-        <h2 id="settingsTitle">Einstellungen</h2>
-        <button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-      </div>
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="settingsTitle">
+      <div class="modal-head"><h2 id="settingsTitle">Einstellungen</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
 
-      <div class="setting storage">
-        <div class="setting-text">
+      <div class="section" id="secStorage" hidden>
+        <div class="txt">
           <h4>Speicher</h4>
           <p id="storageText">Wird berechnet…</p>
-          <div class="storage-bar" title="Belegung der Festplatte">
-            <span class="seg-dl" id="barDl"></span><span class="seg-other" id="barOther"></span>
-          </div>
-          <div class="storage-legend">
-            <span><i class="lg-dl"></i>Downloads</span>
-            <span><i class="lg-other"></i>Sonstiges</span>
-            <span><i class="lg-free"></i>Frei</span>
-          </div>
+          <div class="meter" id="meter"><span class="m-dl" id="mDl"></span><span class="m-other" id="mOther"></span></div>
+          <div class="legend"><span><i class="l1"></i>Downloads</span><span><i class="l2"></i>Sonstiges</span><span><i class="l3"></i>Frei</span></div>
         </div>
-        <button class="btn danger" id="purgeBtn"><span>Alle Downloads löschen</span></button>
+        <div class="acts"><button class="btn danger" id="purgeBtn"><span>Alle Downloads löschen</span></button></div>
       </div>
 
-      <div class="setting">
-        <div class="setting-text">
-          <h4>yt-dlp aktualisieren</h4>
-          <p>Wenn YouTube etwas ändert, hilft meist ein Update. Installiert: <b id="ytdlpVersion2">…</b></p>
-        </div>
-        <button class="btn" id="updateBtn"><span>Aktualisieren</span></button>
+      <div class="section" id="secUpdate" hidden>
+        <div class="txt"><h4>yt-dlp aktualisieren</h4><p>Wenn YouTube oder SoundCloud etwas ändern, hilft meist ein Update. Installiert: <b id="ytdlpVersion2">…</b></p></div>
+        <div class="acts"><button class="btn" id="updateBtn"><span>Aktualisieren</span></button></div>
       </div>
 
-      <div class="setting">
-        <div class="setting-text">
-          <h4>Cookies <span class="badge" id="cookieBadge">keine</span></h4>
-          <p>Bei „Sign in to confirm you're not a bot“ oder altersbeschränkten Videos: <code>cookies.txt</code> aus dem Browser exportieren und hier hochladen.</p>
-        </div>
-        <div class="setting-actions">
+      <div class="section" id="secCookies" hidden>
+        <div class="txt"><h4>Cookies <span class="pill" id="cookiePill">keine</span></h4><p>Bei „Sign in to confirm you're not a bot“ oder altersbeschränkten Videos: <code>cookies.txt</code> aus dem Browser exportieren und hochladen.</p></div>
+        <div class="acts">
           <label class="btn"><input type="file" id="cookieFile" accept=".txt,text/plain" hidden><span>Hochladen</span></label>
-          <button class="btn subtle" id="cookieDelete" hidden>Entfernen</button>
+          <button class="btn ghost" id="cookieDelete" hidden>Entfernen</button>
         </div>
       </div>
 
-      <div class="setting">
-        <div class="setting-text">
-          <h4>Lesezeichen</h4>
-          <p>Zieh diesen Button in deine Lesezeichenleiste – ein Klick auf einer Videoseite schickt sie an ScobeTube.</p>
-        </div>
-        <div class="setting-actions">
-          <a class="btn" id="bmVideo" href="#">▶ Video</a>
-          <a class="btn" id="bmAudio" href="#">♫ MP3</a>
-        </div>
+      <div class="section" id="secBookmarks" hidden>
+        <div class="txt"><h4>Lesezeichen</h4><p>In die Lesezeichenleiste ziehen. Ein Klick auf einer Video- oder Track-Seite öffnet ScobeTube mit dem Link.</p></div>
+        <div class="acts"><a class="btn ghost" id="bmVideo" href="#">▶ Video</a><a class="btn ghost" id="bmAudio" href="#">♫ Audio</a></div>
       </div>
     </div>
   </div>
 
-  <!-- Löschen-Popover -->
-  <div class="popover glass" id="delPop" hidden>
+  <!-- Benutzerverwaltung -->
+  <div class="modal" id="usersModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card wide" role="dialog" aria-labelledby="usersTitle">
+      <div class="modal-head"><h2 id="usersTitle">Benutzer &amp; Rechte</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="users" id="usersList"></div>
+      <form class="new-user form" id="newUserForm" autocomplete="off">
+        <h4>+ Neues Konto</h4>
+        <div class="form-row">
+          <label class="field"><span class="label">Benutzername</span><input class="input" id="nuName" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="off"></label>
+          <label class="field"><span class="label">Passwort (min. 8 Zeichen)</span><input class="input" id="nuPass" type="password" required minlength="8" autocomplete="new-password"></label>
+        </div>
+        <div><span class="label">Rechte</span><div class="perm-grid" id="nuPerms"></div></div>
+        <div class="form-msg" id="nuMsg"></div>
+        <div><button class="btn accent" type="submit">Konto anlegen</button></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Passwort ändern -->
+  <div class="modal" id="pwModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="pwTitle">
+      <div class="modal-head"><h2 id="pwTitle">Passwort ändern</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <form class="form" id="pwForm">
+        <label class="field"><span class="label">Aktuelles Passwort</span><input class="input" type="password" id="pwCurrent" required autocomplete="current-password"></label>
+        <label class="field"><span class="label">Neues Passwort</span><input class="input" type="password" id="pwNew" required minlength="8" autocomplete="new-password"></label>
+        <div class="strength" id="pwStrength"><i></i><i></i><i></i><i></i></div>
+        <label class="field"><span class="label">Neues Passwort wiederholen</span><input class="input" type="password" id="pwNew2" required minlength="8" autocomplete="new-password"></label>
+        <div class="form-msg" id="pwMsg"></div>
+        <p class="label">Alle anderen Geräte werden danach abgemeldet.</p>
+        <div><button class="btn accent" type="submit">Speichern</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="popover" id="delPop" hidden>
     <p>Eintrag entfernen?</p>
-    <button class="btn subtle" data-del="entry">Nur aus Liste</button>
-    <button class="btn danger" data-del="file">Mit Datei löschen</button>
+    <button class="btn ghost small" data-del="entry">Nur aus Liste</button>
+    <button class="btn danger small" data-del="file">Mit Datei löschen</button>
   </div>
 
   <div class="toasts" id="toasts"></div>
 
   <template id="itemTpl">
     <article class="item">
-      <div class="thumb">
-        <img alt="" loading="lazy" referrerpolicy="no-referrer">
-        <div class="thumb-fallback"><svg viewBox="0 0 24 24"><path d="M9 6.5v11l9-5.5z"/></svg></div>
-        <span class="duration"></span>
-        <div class="done-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      <div class="media">
+        <img class="thumb" alt="" loading="lazy" referrerpolicy="no-referrer">
+        <div class="vinyl"><div class="label"><img alt="" referrerpolicy="no-referrer"></div></div>
+        <div class="fallback">▶</div>
+        <svg class="ring" viewBox="0 0 74 74"><circle class="rt" cx="37" cy="37" r="32"/><circle class="rv" cx="37" cy="37" r="32"/></svg>
+        <span class="pct"></span>
+        <span class="src"></span>
+        <span class="dur"></span>
       </div>
       <div class="body">
-        <div class="meta-top">
-          <span class="status"><span class="status-dot"></span><span class="status-text"></span></span>
-          <span class="fmt"></span>
-          <span class="playlist-chip"></span>
-        </div>
+        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
         <h3 class="title"></h3>
-        <div class="sub-line"><span class="uploader"></span></div>
-        <div class="progress"><div class="bar"></div></div>
+        <div class="sub"></div>
+        <div class="cells"></div>
         <div class="stats"></div>
-        <div class="error-msg"></div>
+        <div class="err"></div>
       </div>
       <div class="actions">
-        <a class="act primary dl" title="Herunterladen" download>
-          <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
-        </a>
+        <a class="act primary dl" title="Herunterladen" download><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg></a>
         <button class="act retry" title="Erneut versuchen"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
-        <button class="act cancel" title="Abbrechen"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+        <button class="act cancel" title="Abbrechen"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12"/></svg></button>
         <button class="act del" title="Entfernen"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg></button>
       </div>
+      <div class="stamp">FERTIG</div>
     </article>
   </template>
 

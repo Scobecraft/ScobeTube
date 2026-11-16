@@ -11,5 +11,6 @@ if __name__ == "__main__":
         port=config.PORT,
         log_level=os.environ.get("LOG_LEVEL", "info").lower(),
         proxy_headers=True,
-        forwarded_allow_ips="*",
+        forwarded_allow_ips=config.TRUSTED_PROXIES,
+        server_header=False,
     )

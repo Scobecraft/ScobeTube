@@ -33,8 +33,10 @@ PLAYLIST_SUBFOLDER = _bool("PLAYLIST_SUBFOLDER", True)
 PLAYLIST_LIMIT = _int("PLAYLIST_LIMIT", 0)  # 0 = unbegrenzt
 WINDOWS_FILENAMES = _bool("WINDOWS_FILENAMES", True)
 
-AUTH_USER = os.environ.get("AUTH_USER", "")
-AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
+# Session-Cookie nur über HTTPS senden: auto (erkennt HTTPS), true, false
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "auto").lower()
+# IPs von Reverse-Proxys, deren X-Forwarded-For/-Proto vertraut wird (kommagetrennt, "*" = alle)
+TRUSTED_PROXIES = os.environ.get("TRUSTED_PROXIES", "127.0.0.1")
 
 COOKIES_FILE = Path(os.environ.get("COOKIES_FILE", str(STATE_DIR / "cookies.txt")))
 YTDLP_CHANNEL = os.environ.get("YTDLP_CHANNEL", "stable").lower()  # stable | nightly

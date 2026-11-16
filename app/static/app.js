@@ -3,28 +3,44 @@
   "use strict";
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const FORMATS = {
-    video: { formats: ["mp4", "mkv", "webm"], qualities: ["best", "2160", "1440", "1080", "720", "480", "360"] },
-    audio: { formats: ["mp3", "m4a", "opus", "flac", "wav"], qualities: ["best", "320", "256", "192", "128"] },
+  const SOURCES = {
+    all: {
+      video: { formats: ["mp4", "mkv", "webm"], qualities: ["best", "2160", "1440", "1080", "720", "480", "360"] },
+      audio: { formats: ["mp3", "m4a", "opus", "flac", "wav", "original"], qualities: ["best", "320", "256", "192", "128"] },
+      placeholder: "Link einfügen – oder YouTube durchsuchen",
+      search: "youtube",
+    },
+    soundcloud: {
+      audio: { formats: ["original", "mp3", "m4a", "opus", "flac", "wav"], qualities: ["best", "320", "256", "192", "128"] },
+      placeholder: "SoundCloud-Link (Track, Set, Profil) – oder Suchbegriff",
+      search: "soundcloud",
+    },
   };
-  const LOSSLESS = ["flac", "wav"];
-  const STATUS_TEXT = {
-    preparing: "Analysiere", queued: "Wartet", downloading: "Lädt", processing: "Verarbeite",
-    done: "Fertig", error: "Fehler", cancelled: "Abgebrochen",
-  };
+  const NO_QUALITY = ["flac", "wav", "original"];
+  const STATUS = { preparing: "Analyse", queued: "Wartet", downloading: "Lädt", processing: "Konvertiert", done: "Fertig", error: "Fehler", cancelled: "Abgebrochen" };
   const ACTIVE = ["preparing", "queued", "downloading", "processing"];
+  const CELLS = 24;
 
-  const store = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem("st:" + k)); localStorage.setItem("st:" + k, JSON.stringify(v)); } catch { return null; } };
+  const store = (k, v) => {
+    try {
+      if (v === undefined) return JSON.parse(localStorage.getItem("st2:" + k));
+      localStorage.setItem("st2:" + k, JSON.stringify(v));
+    } catch { return null; }
+  };
   const state = {
+    me: null, permLabels: {},
+    source: store("source") || "all",
     kind: store("kind") || "video",
     format: store("format") || {},
     quality: store("quality") || {},
     filter: store("filter") || "all",
     items: new Map(),
   };
+  const can = (p) => !!state.me && state.me.effective.includes(p);
 
-  // ---------------------------------------------------------------- helpers
+  // ------------------------------------------------------------ helpers
   const fmtBytes = (b) => {
     if (b == null || isNaN(b)) return "";
     const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
@@ -37,182 +53,269 @@
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
   };
-  const qLabel = (kind, q) => q === "best" ? "Beste" : kind === "video" ? (q === "2160" ? "4K" : q === "1440" ? "2K" : q + "p") : q + " kbit/s";
+  const fmtDate = (t) => t ? new Date(t * 1000).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "nie";
+  const qLabel = (kind, q) => q === "best" ? "Beste" : kind === "video" ? (q === "2160" ? "4K" : q === "1440" ? "2K" : q + "p") : q + "k";
+  const fLabel = (f) => f === "original" ? "Original" : f.toUpperCase();
+  const isUrl = (t) => /https?:\/\/\S+/i.test(t);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const restart = (node, cls) => { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); };
 
   async function api(path, opts = {}) {
+    const isForm = opts.body instanceof FormData;
+    const headers = { "X-ScobeTube": "1" };
+    if (opts.body && !isForm) headers["Content-Type"] = "application/json";
     const res = await fetch("api/" + path, {
-      headers: opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {},
-      ...opts,
-      body: opts.body && !(opts.body instanceof FormData) ? JSON.stringify(opts.body) : opts.body,
+      ...opts, headers, credentials: "same-origin",
+      body: opts.body && !isForm ? JSON.stringify(opts.body) : opts.body,
     });
+    if (res.status === 401 && !path.startsWith("auth/password")) { location.href = "login"; throw new Error("Nicht angemeldet"); }
     let data = null;
     try { data = await res.json(); } catch { /* leer */ }
     if (!res.ok) throw new Error((data && data.detail) || `Fehler ${res.status}`);
     return data;
   }
 
-  // ----------------------------------------------------------------- toasts
-  const ICONS = { success: "✓", error: "!", info: "i" };
+  // ------------------------------------------------------------- toasts
   function toast(msg, type = "info", ms = 3800) {
-    const el = document.createElement("div");
-    el.className = `toast ${type}`;
-    el.innerHTML = `<span class="ti">${ICONS[type] || "i"}</span><span></span>`;
-    el.lastChild.textContent = msg;
-    $("#toasts").appendChild(el);
-    setTimeout(() => { el.classList.add("out"); el.addEventListener("animationend", () => el.remove(), { once: true }); }, ms);
+    const t = el("div", `toast ${type}`);
+    t.append(el("span", "ti", type === "success" ? "✓" : type === "error" ? "!" : "i"), el("span", "", msg));
+    $("#toasts").appendChild(t);
+    setTimeout(() => { t.classList.add("out"); t.addEventListener("animationend", () => t.remove(), { once: true }); }, ms);
   }
 
-  // --------------------------------------------------------------- confetti
-  const confetti = (() => {
-    const cv = $("#confetti"), ctx = cv.getContext("2d");
+  // ------------------------------------------------- konfetti (eckig)
+  const fx = (() => {
+    const cv = $("#fx"), ctx = cv.getContext("2d");
     let parts = [], raf = null;
-    const colors = ["#8b5cf6", "#ec4899", "#f97316", "#22d3a0", "#fbbf24", "#ffffff"];
-    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-    function resize() { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; }
+    const resize = () => { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; };
     addEventListener("resize", resize); resize();
-    function tick() {
-      ctx.clearRect(0, 0, cv.width, cv.height);
+    const tick = () => {
       const d = devicePixelRatio;
+      ctx.clearRect(0, 0, cv.width, cv.height);
       parts = parts.filter((p) => p.life > 0);
       for (const p of parts) {
-        p.vy += 0.32; p.vx *= 0.985; p.vy *= 0.985;
-        p.x += p.vx; p.y += p.vy; p.rot += p.vr; p.life -= 1;
-        ctx.save();
-        ctx.globalAlpha = Math.min(1, p.life / 30);
-        ctx.translate(p.x * d, p.y * d); ctx.rotate(p.rot);
-        ctx.fillStyle = p.c;
-        if (p.round) { ctx.beginPath(); ctx.arc(0, 0, p.s * d / 2, 0, 7); ctx.fill(); }
-        else ctx.fillRect(-p.s * d / 2, -p.s * d / 4, p.s * d, p.s * d / 2);
+        p.vy += 0.35; p.vx *= 0.98; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.life--;
+        ctx.save(); ctx.globalAlpha = Math.min(1, p.life / 25);
+        ctx.translate(p.x * d, p.y * d); ctx.rotate(p.r); ctx.fillStyle = p.c;
+        ctx.fillRect(-p.s * d / 2, -p.s * d / 2, p.s * d, p.s * d * (p.flat ? .35 : 1));
         ctx.restore();
       }
       raf = parts.length ? requestAnimationFrame(tick) : null;
-      if (!raf) ctx.clearRect(0, 0, cv.width, cv.height);
-    }
-    return (x, y, n = 60) => {
-      if (reduce) return;
+    };
+    return (x, y, n = 40) => {
+      if (reduceMotion) return;
+      const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#c6ff3d";
+      const colors = [accent, accent, "#f3f0e7", "#8f6bff", "#ff4d8d"];
       for (let i = 0; i < n; i++) {
-        const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 7;
-        parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 5, rot: Math.random() * 6, vr: (Math.random() - .5) * .4,
-          s: 5 + Math.random() * 6, c: colors[(Math.random() * colors.length) | 0], life: 70 + Math.random() * 40, round: Math.random() < .3 });
+        const a = Math.random() * Math.PI * 2, sp = 3 + Math.random() * 8;
+        parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 6, r: Math.random() * 6, vr: (Math.random() - .5) * .5,
+          s: 5 + Math.random() * 7, c: colors[(Math.random() * colors.length) | 0], life: 60 + Math.random() * 40, flat: Math.random() < .5 });
       }
       if (!raf) raf = requestAnimationFrame(tick);
     };
   })();
 
-  // ------------------------------------------------------- sliding indicators
-  function moveIndicator(container, indicator) {
-    const active = $(".active", container);
-    if (!active) return;
-    indicator.style.width = active.offsetWidth + "px";
-    indicator.style.transform = `translateX(${active.offsetLeft}px)`;
+  // ------------------------------------------------------ hero & deko
+  $$("[data-split]").forEach((row) => {
+    const text = row.textContent; row.textContent = "";
+    [...text].forEach((c, i) => { const s = el("span", "ch", c); s.style.setProperty("--i", i + (row.classList.contains("r2") ? 5 : 0)); row.appendChild(s); });
+  });
+  const wave = $("#scWave");
+  for (let i = 0; i < 64; i++) {
+    const s = el("span");
+    s.style.setProperty("--i", i);
+    s.style.setProperty("--h", (25 + Math.abs(Math.sin(i * .45)) * 55 + Math.random() * 20) + "%");
+    wave.appendChild(s);
   }
-  const seg = $("#kindSeg"), segInd = $(".seg-indicator", seg);
-  const tabs = $("#tabs"), tabInd = $(".tab-indicator", tabs);
-  addEventListener("resize", () => { moveIndicator(seg, segInd); moveIndicator(tabs, tabInd); });
+  const deck = $("#deck");
+  deck.addEventListener("pointermove", (e) => {
+    const r = deck.getBoundingClientRect();
+    deck.style.setProperty("--mx", (e.clientX - r.left) + "px");
+    deck.style.setProperty("--my", (e.clientY - r.top) + "px");
+  });
 
-  // -------------------------------------------------------------- composer
+  // ----------------------------------------------------------- deck
+  const urlEl = $("#url");
+  const srcSwitch = $("#srcSwitch");
+  const kindSeg = $("#kindSeg");
+
+  function moveKindSlider() {
+    const a = $("button.active", kindSeg), s = $(".slider", kindSeg);
+    if (!a) return;
+    s.style.width = a.offsetWidth + "px"; s.style.transform = `translateX(${a.offsetLeft}px)`;
+  }
+  addEventListener("resize", moveKindSlider);
+
+  const curKind = () => state.source === "soundcloud" ? "audio" : state.kind;
+  const fmtKey = () => state.source + ":" + curKind();
+
   function renderChips(animate) {
-    const kind = state.kind, def = FORMATS[kind];
-    const fmt = def.formats.includes(state.format[kind]) ? state.format[kind] : def.formats[0];
+    const kind = curKind(), def = SOURCES[state.source][kind];
+    const key = fmtKey();
+    const fmt = def.formats.includes(state.format[key]) ? state.format[key] : def.formats[0];
     const q = def.qualities.includes(state.quality[kind]) ? state.quality[kind] : "best";
-    state.format[kind] = fmt; state.quality[kind] = q;
-
+    state.format[key] = fmt; state.quality[kind] = q;
     const fc = $("#formatChips"), qc = $("#qualityChips");
-    fc.innerHTML = def.formats.map((f) => `<button type="button" class="chip${f === fmt ? " active" : ""}" data-v="${f}">${f.toUpperCase()}</button>`).join("");
-    const lossless = kind === "audio" && LOSSLESS.includes(fmt);
-    qc.innerHTML = lossless
-      ? `<button type="button" class="chip active" disabled>Verlustfrei</button>`
-      : def.qualities.map((v) => `<button type="button" class="chip${v === q ? " active" : ""}" data-v="${v}">${qLabel(kind, v)}</button>`).join("");
-    if (animate) { [fc, qc].forEach((c) => { c.classList.remove("swap"); void c.offsetWidth; c.classList.add("swap"); }); }
-    $$(".video-only").forEach((el) => el.classList.toggle("hidden", kind !== "video"));
+    fc.replaceChildren(...def.formats.map((f, i) => {
+      const b = el("button", "chip" + (f === fmt ? " active" : ""), fLabel(f)); b.type = "button"; b.dataset.v = f; b.style.setProperty("--i", i); return b;
+    }));
+    qc.replaceChildren(...def.qualities.map((v, i) => {
+      const b = el("button", "chip" + (v === q ? " active" : ""), qLabel(kind, v)); b.type = "button"; b.dataset.v = v; b.style.setProperty("--i", i + def.formats.length); return b;
+    }));
+    $("#qualityGroup").hidden = kind === "audio" && NO_QUALITY.includes(fmt);
+    if (animate) { restart(fc, "swap"); restart(qc, "swap"); }
+    document.body.dataset.kind = kind;
   }
+
+  function setSource(src, animate = true) {
+    if (!SOURCES[src]) src = "all";
+    state.source = src; store("source", src);
+    document.body.dataset.source = src;
+    $$("button", srcSwitch).forEach((b, i) => { b.classList.toggle("active", b.dataset.source === src); if (b.dataset.source === src) srcSwitch.dataset.pos = i; });
+    urlEl.placeholder = SOURCES[src].placeholder;
+    $("#playlistLabel").textContent = src === "soundcloud" ? "Ganze Sets & Profile" : "Ganze Playlist";
+    renderChips(animate);
+    updateMode();
+    requestAnimationFrame(moveKindSlider);
+    if (animate) { const r = srcSwitch.getBoundingClientRect(); fx(r.left + r.width * (src === "soundcloud" ? .75 : .25), r.bottom, 18); }
+  }
+  srcSwitch.addEventListener("click", (e) => { const b = e.target.closest("button[data-source]"); if (b && b.dataset.source !== state.source) setSource(b.dataset.source); });
 
   function setKind(kind, animate = true) {
     state.kind = kind; store("kind", kind);
-    $$("button", seg).forEach((b) => b.classList.toggle("active", b.dataset.kind === kind));
-    moveIndicator(seg, segInd);
-    renderChips(animate);
+    $$("button", kindSeg).forEach((b) => b.classList.toggle("active", b.dataset.kind === kind));
+    moveKindSlider(); renderChips(animate);
   }
-  seg.addEventListener("click", (e) => { const b = e.target.closest("button[data-kind]"); if (b && b.dataset.kind !== state.kind) setKind(b.dataset.kind); });
+  kindSeg.addEventListener("click", (e) => { const b = e.target.closest("button[data-kind]"); if (b && b.dataset.kind !== state.kind) setKind(b.dataset.kind); });
 
   $("#formatChips").addEventListener("click", (e) => {
-    const b = e.target.closest(".chip[data-v]"); if (!b) return;
-    state.format[state.kind] = b.dataset.v; store("format", state.format);
-    renderChips(false); $(`#formatChips [data-v="${b.dataset.v}"]`).classList.add("pop");
+    const b = e.target.closest(".chip"); if (!b) return;
+    state.format[fmtKey()] = b.dataset.v; store("format", state.format);
+    renderChips(false); restart($(`#formatChips [data-v="${b.dataset.v}"]`), "pop");
   });
   $("#qualityChips").addEventListener("click", (e) => {
-    const b = e.target.closest(".chip[data-v]"); if (!b) return;
-    state.quality[state.kind] = b.dataset.v; store("quality", state.quality);
-    $$("#qualityChips .chip").forEach((c) => c.classList.toggle("active", c === b));
-    b.classList.remove("pop"); void b.offsetWidth; b.classList.add("pop");
+    const b = e.target.closest(".chip"); if (!b) return;
+    state.quality[curKind()] = b.dataset.v; store("quality", state.quality);
+    $$("#qualityChips .chip").forEach((c) => c.classList.toggle("active", c === b)); restart(b, "pop");
   });
-
   ["optPlaylist", "optThumb", "optSubs"].forEach((id) => {
-    const el = $("#" + id), saved = store(id);
-    if (saved !== null) el.checked = saved;
-    el.addEventListener("change", () => store(id, el.checked));
+    const c = $("#" + id), saved = store(id);
+    if (saved !== null) c.checked = saved;
+    c.addEventListener("change", () => store(id, c.checked));
   });
 
-  const urlEl = $("#url");
-  const autosize = () => { urlEl.style.height = "auto"; urlEl.style.height = urlEl.scrollHeight + "px"; };
-  urlEl.addEventListener("input", autosize);
-  urlEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#addForm").requestSubmit(); }
-  });
-  $("#pasteBtn").addEventListener("click", async () => {
-    try {
-      const t = await navigator.clipboard.readText();
-      if (t) { urlEl.value = urlEl.value ? urlEl.value.trim() + "\n" + t.trim() : t.trim(); autosize(); urlEl.focus(); }
-    } catch { toast("Kein Zugriff auf die Zwischenablage – bitte mit Strg+V einfügen", "info"); urlEl.focus(); }
-  });
-
-  async function submit(urls) {
-    const go = $("#goBtn");
-    go.classList.add("loading");
-    try {
-      const res = await api("add", {
-        method: "POST",
-        body: {
-          urls, kind: state.kind, format: state.format[state.kind], quality: state.quality[state.kind],
-          playlist: $("#optPlaylist").checked, thumbnail: $("#optThumb").checked, subtitles: $("#optSubs").checked,
-        },
-      });
-      const n = res.added.length;
-      toast(n === 1 ? "Zur Warteschlange hinzugefügt" : `${n} Links hinzugefügt`, "success");
-      urlEl.value = ""; autosize();
-      const r = go.getBoundingClientRect();
-      confetti(r.left + r.width / 2, r.top + r.height / 2, 28);
-      if (state.filter === "done" || state.filter === "failed") setFilter("all");
-    } catch (err) {
-      toast(err.message, "error", 5000);
-      $("#addForm").animate([{ transform: "translateX(0)" }, { transform: "translateX(-8px)" }, { transform: "translateX(8px)" }, { transform: "translateX(-4px)" }, { transform: "translateX(0)" }], { duration: 380, easing: "ease-out" });
-    } finally {
-      go.classList.remove("loading");
+  // Link oder Suche?
+  let lastMode = "link";
+  function updateMode() {
+    const v = urlEl.value.trim();
+    const mode = !v || isUrl(v) ? "link" : "search";
+    const hint = $("#modeHint");
+    hint.textContent = mode === "search" ? (state.source === "soundcloud" ? "SC-Suche" : "YT-Suche") : "Link";
+    hint.classList.toggle("search", mode === "search");
+    if (mode !== lastMode) {
+      lastMode = mode;
+      const go = $("#goBtn");
+      restart(go, "flip");
+      setTimeout(() => {
+        $("#goText").textContent = mode === "search" ? "Suchen" : "Laden";
+        $("#goIcon").innerHTML = mode === "search" ? '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>' : '<path d="M12 4v13m0 0-5-5m5 5 5-5M5 21h14"/>';
+      }, 180);
+    }
+    // SoundCloud-Link erkannt → automatisch umschalten
+    if (state.source === "all" && /soundcloud\.com\//i.test(v) && !/youtu/i.test(v)) {
+      setSource("soundcloud"); toast("SoundCloud-Link erkannt – Audio-Modus aktiv", "info", 2500);
     }
   }
-  $("#addForm").addEventListener("submit", (e) => {
+  const autosize = () => { urlEl.style.height = "auto"; urlEl.style.height = urlEl.scrollHeight + "px"; };
+  urlEl.addEventListener("input", () => { autosize(); updateMode(); });
+  urlEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#addForm").requestSubmit(); } });
+  $("#pasteBtn").addEventListener("click", async () => {
+    try {
+      const t = (await navigator.clipboard.readText()).trim();
+      if (t) { urlEl.value = urlEl.value.trim() ? urlEl.value.trim() + "\n" + t : t; autosize(); updateMode(); urlEl.focus(); }
+    } catch { toast("Kein Zugriff auf die Zwischenablage – bitte mit Strg+V einfügen"); urlEl.focus(); }
+  });
+
+  function currentOptions() {
+    const kind = curKind();
+    return {
+      kind, format: state.format[fmtKey()], quality: state.quality[kind],
+      playlist: $("#optPlaylist").checked, thumbnail: $("#optThumb").checked,
+      subtitles: kind === "video" && $("#optSubs").checked,
+    };
+  }
+
+  async function submitUrls(urls, originEl) {
+    const res = await api("add", { method: "POST", body: { urls, ...currentOptions() } });
+    const n = res.added.length;
+    toast(n === 1 ? "Ab in die Queue!" : `${n} Links in der Queue`, "success");
+    const r = (originEl || $("#goBtn")).getBoundingClientRect();
+    fx(r.left + r.width / 2, r.top + r.height / 2, 34);
+    if (state.filter === "done" || state.filter === "failed") setFilter("all");
+    return res;
+  }
+
+  $("#addForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const v = urlEl.value.trim();
     if (!v) { urlEl.focus(); return; }
-    submit(v);
+    const go = $("#goBtn"); go.classList.add("loading");
+    try {
+      if (isUrl(v)) { await submitUrls(v); urlEl.value = ""; autosize(); updateMode(); }
+      else await runSearch(v);
+    } catch (err) {
+      toast(err.message, "error", 5500);
+      deck.animate([{ transform: "translateX(0)" }, { transform: "translateX(-10px) rotate(-.5deg)" }, { transform: "translateX(8px)" }, { transform: "translateX(0)" }], { duration: 380 });
+    } finally { go.classList.remove("loading"); }
   });
 
-  // ------------------------------------------------------------ drag & drop
+  // ------------------------------------------------------------ suche
+  const results = $("#results"), grid = $("#resultsGrid");
+  async function runSearch(q) {
+    const source = SOURCES[state.source].search;
+    results.hidden = false;
+    $("#resultsTitle").textContent = `Suche: „${q}“`;
+    grid.replaceChildren(...Array.from({ length: 8 }, () => el("div", "skeleton")));
+    results.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    let data;
+    try { data = await api(`search?source=${source}&q=${encodeURIComponent(q)}`); }
+    catch (err) { results.hidden = true; throw err; }
+    if (!data.results.length) { grid.replaceChildren(el("p", "label", "Nichts gefunden.")); return; }
+    grid.replaceChildren(...data.results.map((r, i) => {
+      const card = el("div", "res"); card.style.setProperty("--i", i);
+      const art = el("div", "art");
+      if (r.thumbnail) { const img = el("img"); img.src = r.thumbnail; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer"; art.appendChild(img); }
+      if (r.duration) art.appendChild(el("span", "dur", fmtTime(r.duration)));
+      const info = el("div", "info"); info.append(el("div", "t", r.title), el("div", "u", r.uploader || ""));
+      const add = el("button", "btn small add", "+ Laden"); add.type = "button";
+      add.addEventListener("click", async () => {
+        add.classList.add("busy");
+        try { await submitUrls(r.url, add); card.classList.add("added"); add.textContent = "✓ In der Queue"; }
+        catch (err) { toast(err.message, "error"); }
+        finally { add.classList.remove("busy"); }
+      });
+      card.append(art, info, add);
+      return card;
+    }));
+  }
+  $("#resultsClose").addEventListener("click", () => { results.hidden = true; });
+
+  // ------------------------------------------------------ drag & drop
   let dragDepth = 0;
-  const overlay = $("#dropOverlay");
-  addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; overlay.classList.add("show"); });
-  addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; overlay.classList.remove("show"); } });
+  const drop = $("#drop");
+  addEventListener("dragenter", (e) => { if (!can("download")) return; e.preventDefault(); dragDepth++; drop.classList.add("show"); });
+  addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; drop.classList.remove("show"); } });
   addEventListener("dragover", (e) => e.preventDefault());
   addEventListener("drop", (e) => {
-    e.preventDefault(); dragDepth = 0; overlay.classList.remove("show");
+    e.preventDefault(); dragDepth = 0; drop.classList.remove("show");
+    if (!can("download")) return;
     const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-    if (t && /https?:\/\//i.test(t)) submit(t);
+    if (t && isUrl(t)) { if (/soundcloud\.com\//i.test(t)) setSource("soundcloud", false); submitUrls(t).catch((err) => toast(err.message, "error")); }
     else toast("Das war kein Link", "error");
   });
 
-  // --------------------------------------------------------------- the list
+  // -------------------------------------------------------------- liste
   const list = $("#list"), tpl = $("#itemTpl");
-
   function matchesFilter(it) {
     switch (state.filter) {
       case "active": return ACTIVE.includes(it.status);
@@ -221,9 +324,7 @@
       default: return true;
     }
   }
-
   function sortKey(it) {
-    // Aktive zuerst (älteste oben), danach Fertige (neueste oben)
     const order = { downloading: 0, processing: 0, preparing: 1, queued: 2 };
     if (ACTIVE.includes(it.status)) return [0, order[it.status], it.created];
     return [1, 0, -(it.finished || it.created)];
@@ -233,11 +334,14 @@
   function createNode(it) {
     const node = tpl.content.firstElementChild.cloneNode(true);
     node.dataset.id = it.id;
-    const img = $("img", node);
+    const cells = $(".cells", node);
+    for (let i = 0; i < CELLS; i++) { const c = el("i"); c.style.setProperty("--i", i); cells.appendChild(c); }
+    const img = $("img.thumb", node), labelImg = $(".vinyl img", node);
     img.addEventListener("load", () => img.classList.add("loaded"));
     img.addEventListener("error", () => img.removeAttribute("src"));
+    labelImg.addEventListener("error", () => labelImg.removeAttribute("src"));
     $(".cancel", node).addEventListener("click", () => api(`items/${it.id}/cancel`, { method: "POST" }).catch((e) => toast(e.message, "error")));
-    $(".retry", node).addEventListener("click", () => api(`items/${it.id}/retry`, { method: "POST" }).then(() => toast("Neuer Versuch gestartet", "info")).catch((e) => toast(e.message, "error")));
+    $(".retry", node).addEventListener("click", () => api(`items/${it.id}/retry`, { method: "POST" }).then(() => toast("Neuer Versuch läuft")).catch((e) => toast(e.message, "error")));
     $(".del", node).addEventListener("click", (e) => {
       const cur = state.items.get(it.id);
       if (cur && cur.status === "done" && cur.filename) openDelPopover(e.currentTarget, it.id);
@@ -247,59 +351,61 @@
   }
 
   function updateNode(node, it, prev) {
-    node.dataset.status = it.status;
-    node.dataset.kind = it.options.kind;
-    const img = $("img", node);
-    if (it.thumbnail && img.getAttribute("src") !== it.thumbnail) img.src = it.thumbnail;
-    $(".duration", node).textContent = it.duration ? fmtTime(it.duration) : "";
-    $(".status-text", node).textContent = STATUS_TEXT[it.status] || it.status;
     const o = it.options;
-    const q = o.kind === "audio" && LOSSLESS.includes(o.format) ? "" : o.quality !== "best" ? " · " + qLabel(o.kind, o.quality) : "";
-    $(".fmt", node).textContent = o.format.toUpperCase() + q;
-    $(".playlist-chip", node).textContent = it.playlist ? "☰ " + it.playlist : "";
-    $(".playlist-chip", node).title = it.playlist || "";
+    node.dataset.status = it.status;
+    node.dataset.kind = o.kind;
+    node.dataset.canDl = can("download") ? "1" : "0";
+    node.dataset.canDelete = can("delete") ? "1" : "0";
+    node.dataset.canFiles = can("files") ? "1" : "0";
+    const img = $("img.thumb", node), labelImg = $(".vinyl img", node);
+    if (it.thumbnail && img.getAttribute("src") !== it.thumbnail) { img.src = it.thumbnail; labelImg.src = it.thumbnail; }
+    $(".dur", node).textContent = it.duration ? fmtTime(it.duration) : "";
+    const srcName = it.source === "generic" ? "" : it.source === "archiveorg" ? "archive.org" : (it.source || "");
+    const src = $(".src", node); src.textContent = srcName; src.className = "src " + (it.source || "");
+    $(".tag.status", node).textContent = STATUS[it.status] || it.status;
+    const q = o.kind === "audio" && NO_QUALITY.includes(o.format) ? "" : o.quality !== "best" ? " · " + qLabel(o.kind, o.quality) : "";
+    $(".tag.fmt", node).textContent = fLabel(o.format) + q;
+    $(".tag.playlist", node).textContent = it.playlist ? "☰ " + it.playlist : "";
+    $(".tag.playlist", node).title = it.playlist || "";
+    $(".tag.owner", node).textContent = can("view_all") && it.owner ? it.owner : "";
     const t = $(".title", node);
     if (t.textContent !== it.title) { t.textContent = it.title; t.title = it.title; }
-    $(".uploader", node).textContent = it.uploader || "";
-    $(".bar", node).style.width = (it.status === "downloading" ? it.progress : 0) + "%";
+    $(".sub", node).textContent = it.uploader || "";
 
-    let stats = "";
+    const p = it.status === "downloading" ? (it.progress || 0) : 0;
+    $(".ring .rv", node).style.strokeDashoffset = String(201 * (1 - p / 100));
+    $(".pct", node).textContent = Math.floor(p) + "%";
+    const on = Math.round(p / 100 * CELLS);
+    $$(".cells i", node).forEach((c, i) => { c.classList.toggle("on", i < on - 1 || (on === CELLS && i < CELLS)); c.classList.toggle("head", i === on - 1 && on < CELLS); });
+
+    const stats = $(".stats", node); const parts = [];
+    const add = (strong, text) => { const s = el("span"); if (strong) s.appendChild(el("b", "", strong)); if (text) s.append((strong ? " " : "") + text); parts.push(s); };
     if (it.status === "downloading") {
-      stats += `<span><b>${(it.progress || 0).toFixed(1)}%</b></span>`;
-      if (it.total) stats += `<span>${fmtBytes(it.downloaded)} / ${fmtBytes(it.total)}</span>`;
-      if (it.speed) stats += `<span>⚡ ${fmtBytes(it.speed)}/s</span>`;
-      if (it.eta != null) stats += `<span>noch ${fmtTime(it.eta)}</span>`;
-    } else if (it.status === "processing") {
-      stats = "<span>Konvertiere & bette Metadaten ein…</span>";
-    } else if (it.status === "queued") {
-      stats = "<span>In der Warteschlange</span>";
-    } else if (it.status === "preparing") {
-      stats = "<span>Hole Infos…</span>";
-    } else if (it.status === "done") {
-      if (it.filesize) stats += `<span><b>${fmtBytes(it.filesize)}</b></span>`;
-      if (it.filename) stats += `<span title="${escapeAttr(it.filename)}">📁 ${escapeHtml(shorten(it.filename, 60))}</span>`;
+      add(`${p.toFixed(1)}%`);
+      if (it.total) add("", `${fmtBytes(it.downloaded)} / ${fmtBytes(it.total)}`);
+      if (it.speed) add("", `${fmtBytes(it.speed)}/s`);
+      if (it.eta != null) add("", `ETA ${fmtTime(it.eta)}`);
+    } else if (it.status === "processing") add("", "Konvertiere & schreibe Metadaten…");
+    else if (it.status === "queued") add("", "Wartet auf freien Slot…");
+    else if (it.status === "preparing") add("", "Hole Infos…");
+    else if (it.status === "done") {
+      if (it.filesize) add(fmtBytes(it.filesize));
+      if (it.filename) { add("", "📁 " + (it.filename.length > 60 ? "…" + it.filename.slice(-60) : it.filename)); parts[parts.length - 1].title = it.filename; }
     }
-    const s = $(".stats", node);
-    if (s.innerHTML !== stats) s.innerHTML = stats;
-    $(".error-msg", node).textContent = it.error || "";
-
+    stats.replaceChildren(...parts);
+    $(".err", node).textContent = it.error || "";
     const dl = $(".dl", node);
     if (it.status === "done") dl.href = `api/files/${it.id}`; else dl.removeAttribute("href");
 
     if (prev && prev.status !== "done" && it.status === "done") {
-      node.classList.remove("just-done"); void node.offsetWidth; node.classList.add("just-done");
-      setTimeout(() => node.classList.remove("just-done"), 2400);
-      const r = $(".thumb", node).getBoundingClientRect();
-      if (r.top < innerHeight && r.bottom > 0) confetti(r.left + r.width / 2, r.top + r.height / 2, 45);
+      restart(node, "just-done");
+      setTimeout(() => node.classList.remove("just-done"), 2600);
+      const r = $(".media", node).getBoundingClientRect();
+      if (r.top < innerHeight && r.bottom > 0) setTimeout(() => fx(r.left + r.width / 2, r.top + r.height / 2, 46), 250);
     }
     node.classList.toggle("filtered", !matchesFilter(it));
   }
 
-  const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const escapeAttr = escapeHtml;
-  const shorten = (s, n) => s.length > n ? "…" + s.slice(-n) : s;
-
-  // FLIP-Animation beim Umsortieren
   function reorder() {
     const sorted = [...state.items.values()].sort(cmp);
     const nodes = sorted.map((it) => list.querySelector(`[data-id="${it.id}"]`)).filter(Boolean);
@@ -308,14 +414,14 @@
     const first = new Map(nodes.map((n) => [n, n.getBoundingClientRect().top]));
     nodes.forEach((n) => list.appendChild(n));
     $$(".item.leaving", list).forEach((n) => list.appendChild(n));
+    if (reduceMotion) return;
     nodes.forEach((n) => {
       const dy = first.get(n) - n.getBoundingClientRect().top;
-      if (dy && !n.classList.contains("filtered")) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 500, easing: "cubic-bezier(.22,1,.36,1)" });
+      if (dy && !n.classList.contains("filtered")) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 550, easing: "cubic-bezier(.22,1,.36,1)" });
     });
   }
-
-  let reorderQueued = false;
-  const scheduleReorder = () => { if (reorderQueued) return; reorderQueued = true; requestAnimationFrame(() => { reorderQueued = false; reorder(); updateCounts(); }); };
+  let queued = false;
+  const schedule = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; reorder(); updateCounts(); }); };
 
   function upsert(it) {
     const prev = state.items.get(it.id);
@@ -323,24 +429,18 @@
     let node = list.querySelector(`[data-id="${it.id}"]`);
     if (!node) { node = createNode(it); list.prepend(node); }
     updateNode(node, it, prev);
-    if (!prev || prev.status !== it.status) scheduleReorder();
+    if (!prev || prev.status !== it.status) schedule();
   }
-
   function removeItem(id) {
     state.items.delete(id);
     const node = list.querySelector(`[data-id="${id}"]`);
     if (node) {
-      const h = node.offsetHeight;
       node.classList.add("leaving");
-      node.addEventListener("animationend", function onEnd(ev) {
-        if (ev.target !== node) return;
-        node.removeEventListener("animationend", onEnd);
-        node.animate([{ height: h + "px", marginBottom: "0px" }, { height: "0px", marginBottom: "-12px", padding: "0px", borderWidth: "0px" }], { duration: 250, easing: "ease-in" })
-          .onfinish = () => node.remove();
-        node.style.height = "0px";
-      });
+      const done = () => node.remove();
+      node.addEventListener("animationend", (ev) => { if (ev.target === node) done(); });
+      setTimeout(done, 700);
     }
-    scheduleReorder();
+    schedule();
   }
 
   const lastCounts = {};
@@ -353,25 +453,25 @@
       failed: all.filter((i) => i.status === "error" || i.status === "cancelled").length,
     };
     for (const k in c) {
-      const el = $(`[data-count="${k}"]`);
-      if (lastCounts[k] !== c[k]) {
-        el.textContent = c[k];
-        if (lastCounts[k] !== undefined) { el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
-        lastCounts[k] = c[k];
-      }
+      const n = $(`[data-count="${k}"]`);
+      if (lastCounts[k] !== c[k]) { n.textContent = c[k]; if (lastCounts[k] !== undefined) restart(n, "bump"); lastCounts[k] = c[k]; }
     }
+    const running = all.filter((i) => i.status === "downloading" || i.status === "processing").length;
+    document.body.classList.toggle("busy", running > 0);
+    $("#activeSup").textContent = c.active ? `${c.active} aktiv` : "";
     const visible = all.filter(matchesFilter).length;
     const empty = $("#empty");
     empty.classList.toggle("show", visible === 0);
-    $("h3", empty).textContent = all.length === 0 ? "Noch nichts hier" : "Hier ist gerade nichts";
-    $("p", empty).textContent = all.length === 0 ? "Füge oben einen Link ein oder zieh ihn einfach auf die Seite." : "In dieser Ansicht gibt es keine Einträge.";
+    $("#emptyBig").textContent = all.length === 0 ? "Leer." : "Nichts hier.";
+    $("#emptyText").textContent = all.length === 0
+      ? (can("download") ? "Link oben reinwerfen – oder einfach auf die Seite ziehen." : "Noch keine Downloads sichtbar.")
+      : "In dieser Ansicht gibt es keine Einträge.";
     document.title = c.active ? `(${c.active}) ScobeTube` : "ScobeTube";
   }
 
   function setFilter(f) {
     state.filter = f; store("filter", f);
-    $$("button", tabs).forEach((b) => b.classList.toggle("active", b.dataset.filter === f));
-    moveIndicator(tabs, tabInd);
+    $$("#filters button[data-filter]").forEach((b) => b.classList.toggle("active", b.dataset.filter === f));
     for (const it of state.items.values()) {
       const node = list.querySelector(`[data-id="${it.id}"]`);
       if (!node) continue;
@@ -381,54 +481,47 @@
     }
     updateCounts();
   }
-  tabs.addEventListener("click", (e) => { const b = e.target.closest("button[data-filter]"); if (b) setFilter(b.dataset.filter); });
-
+  $("#filters").addEventListener("click", (e) => { const b = e.target.closest("button[data-filter]"); if (b) setFilter(b.dataset.filter); });
   $("#clearDone").addEventListener("click", async () => {
     const which = state.filter === "failed" ? "failed" : "finished";
     try {
       const r = await api("clear", { method: "POST", body: { which, delete_files: false } });
-      toast(r.removed ? `${r.removed} Einträge entfernt – Dateien bleiben erhalten` : "Nichts zum Aufräumen", r.removed ? "success" : "info");
+      toast(r.removed ? `${r.removed} Einträge entfernt – Dateien bleiben` : "Nichts zum Aufräumen", r.removed ? "success" : "info");
     } catch (e) { toast(e.message, "error"); }
   });
 
-  // ----------------------------------------------------------- del popover
-  const pop = $("#delPop");
-  let popId = null;
+  // Lösch-Popover
+  const pop = $("#delPop"); let popId = null;
   function openDelPopover(anchor, id) {
-    popId = id;
-    pop.hidden = false;
+    popId = id; pop.hidden = false;
     const r = anchor.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
-    let top = r.bottom + 8; if (top + ph > innerHeight - 10) top = r.top - ph - 8;
-    pop.style.top = top + "px";
-    pop.style.left = Math.max(10, Math.min(innerWidth - pw - 10, r.right - pw)) + "px";
-    pop.style.animation = "none"; void pop.offsetWidth; pop.style.animation = "";
+    let top = r.bottom + 10; if (top + ph > innerHeight - 10) top = r.top - ph - 10;
+    pop.style.top = top + "px"; pop.style.left = Math.max(10, Math.min(innerWidth - pw - 10, r.right - pw)) + "px";
+    restart(pop, "x");
   }
   pop.addEventListener("click", (e) => {
     const b = e.target.closest("[data-del]"); if (!b) return;
     const withFile = b.dataset.del === "file";
-    api(`items/${popId}?delete_file=${withFile}`, { method: "DELETE" })
-      .then(() => withFile && toast("Datei gelöscht", "success"))
-      .catch((err) => toast(err.message, "error"));
+    api(`items/${popId}?delete_file=${withFile}`, { method: "DELETE" }).then(() => withFile && toast("Datei gelöscht", "success")).catch((err) => toast(err.message, "error"));
     pop.hidden = true;
   });
-  document.addEventListener("click", (e) => { if (!pop.hidden && !pop.contains(e.target) && !e.target.closest(".del")) pop.hidden = true; });
+  document.addEventListener("click", (e) => {
+    if (!pop.hidden && !pop.contains(e.target) && !e.target.closest(".del")) pop.hidden = true;
+    if (!$("#userMenu").hidden && !e.target.closest(".user-wrap")) $("#userMenu").hidden = true;
+  });
   addEventListener("scroll", () => { pop.hidden = true; }, { passive: true });
 
-  // ---------------------------------------------------------------- events
+  // ------------------------------------------------------- live-events
   const conn = $("#conn");
-  function setConn(s) {
-    conn.classList.toggle("ok", s === "ok"); conn.classList.toggle("bad", s === "bad");
-    $(".conn-text", conn).textContent = s === "ok" ? "Live" : s === "bad" ? "Getrennt" : "Verbinde…";
-  }
   function connect() {
     const es = new EventSource("api/events");
     es.addEventListener("init", (e) => {
-      setConn("ok");
+      conn.className = "conn ok";
       const { items } = JSON.parse(e.data);
       const ids = new Set(items.map((i) => i.id));
       for (const id of [...state.items.keys()]) if (!ids.has(id)) removeItem(id);
       items.sort(cmp).reverse().forEach(upsert);
-      scheduleReorder();
+      schedule();
     });
     es.addEventListener("added", (e) => upsert(JSON.parse(e.data)));
     es.addEventListener("update", (e) => {
@@ -440,17 +533,23 @@
       }
     });
     es.addEventListener("removed", (e) => removeItem(JSON.parse(e.data).id));
-    es.onerror = () => { setConn("bad"); };
-    es.onopen = () => setConn("ok");
+    es.addEventListener("logout", () => { es.close(); location.href = "login"; });
+    es.onerror = async () => {
+      conn.className = "conn bad";
+      try { const s = await fetch("api/auth/status").then((r) => r.json()); if (!s.user) location.href = "login"; } catch { /* offline */ }
+    };
+    es.onopen = () => { conn.className = "conn ok"; };
   }
 
-  // -------------------------------------------------------------- settings
-  const modal = $("#settings");
-  const openModal = () => { modal.classList.add("open"); modal.setAttribute("aria-hidden", "false"); loadInfo(); loadStorage(); };
-  const closeModal = () => { modal.classList.remove("open"); modal.setAttribute("aria-hidden", "true"); };
-  $("#settingsBtn").addEventListener("click", openModal);
-  modal.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeModal(); });
-  addEventListener("keydown", (e) => { if (e.key === "Escape") { closeModal(); pop.hidden = true; } });
+  // ------------------------------------------------------------ modals
+  function openModal(id) { const m = $("#" + id); m.classList.add("open"); m.setAttribute("aria-hidden", "false"); $("#userMenu").hidden = true; }
+  function closeModal(m) { m.classList.remove("open"); m.setAttribute("aria-hidden", "true"); }
+  $$(".modal").forEach((m) => m.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeModal(m); }));
+  addEventListener("keydown", (e) => { if (e.key === "Escape") { $$(".modal.open").forEach(closeModal); pop.hidden = true; $("#userMenu").hidden = true; } });
+
+  // Einstellungen
+  $("#settingsBtn").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); });
+  $("#footStorage").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); });
 
   async function loadInfo() {
     try {
@@ -458,67 +557,49 @@
       $("#ytdlpVersion").textContent = i.ytdlp;
       $("#ytdlpVersion2").textContent = i.ytdlp + (i.ytdlp_channel === "nightly" ? " (nightly)" : "");
       $("#appVersion").textContent = "v" + i.version;
-      const b = $("#cookieBadge");
-      b.textContent = i.cookies ? "aktiv" : "keine"; b.classList.toggle("on", i.cookies);
+      const p = $("#cookiePill"); p.textContent = i.cookies ? "aktiv" : "keine"; p.classList.toggle("on", i.cookies);
       $("#cookieDelete").hidden = !i.cookies;
-    } catch { /* ignorieren */ }
+    } catch { /* egal */ }
   }
-
-  // Speicher
   async function loadStorage() {
     try {
       const st = await api("storage");
       const pct = (v) => st.disk_total ? Math.max(0, Math.min(100, v / st.disk_total * 100)) : 0;
-      const usedPct = pct(st.disk_used);
-      const dlPct = st.downloads > 0 ? Math.max(pct(st.downloads), 1) : 0;
-      requestAnimationFrame(() => {
-        $("#barDl").style.width = dlPct + "%";
-        $("#barOther").style.width = Math.max(0, usedPct - dlPct) + "%";
-      });
-      const warn = usedPct > 90;
-      $(".storage-bar").classList.toggle("warn", warn);
-      $("#storageText").innerHTML = `Downloads: <b>${fmtBytes(st.downloads)}</b> in ${st.files} ${st.files === 1 ? "Datei" : "Dateien"} · ` +
-        `Frei: <b>${fmtBytes(st.disk_free)}</b> von ${fmtBytes(st.disk_total)}` + (warn ? " · ⚠️ fast voll" : "");
+      const used = pct(st.disk_used), dl = st.downloads > 0 ? Math.max(pct(st.downloads), 1) : 0;
+      requestAnimationFrame(() => { $("#mDl").style.width = dl + "%"; $("#mOther").style.width = Math.max(0, used - dl) + "%"; });
+      const warn = used > 90;
+      $("#meter").classList.toggle("warn", warn);
+      $("#storageText").textContent = `Downloads: ${fmtBytes(st.downloads)} in ${st.files} ${st.files === 1 ? "Datei" : "Dateien"} · Frei: ${fmtBytes(st.disk_free)} von ${fmtBytes(st.disk_total)}${warn ? " · ⚠ fast voll" : ""}`;
       $("#footStorageText").textContent = `${fmtBytes(st.disk_free)} frei`;
       $("#footStorage").classList.toggle("warn", warn);
       $("#purgeBtn").disabled = st.files === 0;
-      $("#purgeBtn").style.opacity = st.files === 0 ? .5 : "";
-    } catch { /* ignorieren */ }
+    } catch { /* egal */ }
   }
-  $("#footStorage").addEventListener("click", openModal);
-
   let purgeTimer = null;
   $("#purgeBtn").addEventListener("click", async (e) => {
     const btn = e.currentTarget, label = $("span", btn);
     if (!btn.classList.contains("confirm")) {
-      btn.classList.add("confirm");
-      label.textContent = "Wirklich alles löschen?";
+      btn.classList.add("confirm"); label.textContent = "Wirklich ALLES löschen?";
       purgeTimer = setTimeout(() => { btn.classList.remove("confirm"); label.textContent = "Alle Downloads löschen"; }, 4000);
       return;
     }
-    clearTimeout(purgeTimer);
-    btn.classList.remove("confirm"); btn.classList.add("busy"); label.textContent = "Lösche…";
+    clearTimeout(purgeTimer); btn.classList.remove("confirm"); btn.classList.add("busy"); label.textContent = "Lösche…";
     try {
       const r = await api("storage/purge", { method: "POST" });
-      toast(`${r.files} ${r.files === 1 ? "Datei" : "Dateien"} gelöscht – ${fmtBytes(r.freed)} frei geworden`, "success", 5000);
-      const rr = btn.getBoundingClientRect();
-      confetti(rr.left + rr.width / 2, rr.top + rr.height / 2, 40);
+      toast(`${r.files} ${r.files === 1 ? "Datei" : "Dateien"} gelöscht – ${fmtBytes(r.freed)} frei`, "success", 5000);
+      const rr = btn.getBoundingClientRect(); fx(rr.left + rr.width / 2, rr.top, 40);
     } catch (err) { toast(err.message, "error"); }
     finally { btn.classList.remove("busy"); label.textContent = "Alle Downloads löschen"; loadStorage(); }
   });
-
   $("#updateBtn").addEventListener("click", async (e) => {
     const btn = e.currentTarget; btn.classList.add("busy"); $("span", btn).textContent = "Lädt…";
     try {
       const r = await api("update-ytdlp", { method: "POST" });
-      if (r.restarting) {
-        toast(`yt-dlp ${r.version} installiert – Server startet neu`, "success", 5000);
-        setTimeout(() => location.reload(), 4000);
-      } else toast(`yt-dlp ist aktuell (${r.version})`, "info");
+      if (r.restarting) { toast(`yt-dlp ${r.version} installiert – Neustart…`, "success", 5000); setTimeout(() => location.reload(), 4000); }
+      else toast(`yt-dlp ist aktuell (${r.version})`);
     } catch (err) { toast(err.message, "error", 6000); }
     finally { btn.classList.remove("busy"); $("span", btn).textContent = "Aktualisieren"; }
   });
-
   $("#cookieFile").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const fd = new FormData(); fd.append("file", f);
@@ -527,29 +608,174 @@
     e.target.value = "";
   });
   $("#cookieDelete").addEventListener("click", async () => {
-    try { await api("cookies", { method: "DELETE" }); toast("Cookies entfernt", "info"); loadInfo(); }
-    catch (err) { toast(err.message, "error"); }
+    try { await api("cookies", { method: "DELETE" }); toast("Cookies entfernt"); loadInfo(); } catch (err) { toast(err.message, "error"); }
+  });
+  const base = new URL("./", location.href).href;
+  const bm = (kind) => `javascript:(()=>{window.open('${base}?kind=${kind}&url='+encodeURIComponent(location.href),'_blank')})()`;
+  $("#bmVideo").href = bm("video"); $("#bmAudio").href = bm("audio");
+  $$("#bmVideo, #bmAudio").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); toast("In die Lesezeichenleiste ziehen 😉"); }));
+
+  // Benutzermenü
+  $("#userBtn").addEventListener("click", () => { const m = $("#userMenu"); m.hidden = !m.hidden; });
+  $("#menuLogout").addEventListener("click", async () => { try { await api("auth/logout", { method: "POST" }); } finally { location.href = "login"; } });
+  $("#menuPassword").addEventListener("click", () => { $("#pwForm").reset(); $("#pwMsg").textContent = ""; $("#pwStrength").dataset.s = "0"; openModal("pwModal"); setTimeout(() => $("#pwCurrent").focus(), 100); });
+  $("#menuUsers").addEventListener("click", () => { openModal("usersModal"); loadUsers(); });
+
+  // Passwort ändern
+  const strength = (pw) => {
+    let s = 0;
+    if (pw.length >= 8) s++;
+    if (pw.length >= 12) s++;
+    if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) s++;
+    if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
+    return pw ? Math.max(1, s) : 0;
+  };
+  $("#pwNew").addEventListener("input", (e) => { $("#pwStrength").dataset.s = strength(e.target.value); });
+  $("#pwForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("#pwMsg"); msg.textContent = "";
+    if ($("#pwNew").value !== $("#pwNew2").value) { msg.textContent = "Die neuen Passwörter stimmen nicht überein"; return; }
+    const btn = $("button[type=submit]", e.target); btn.classList.add("busy");
+    try {
+      await api("auth/password", { method: "POST", body: { current: $("#pwCurrent").value, new: $("#pwNew").value } });
+      closeModal($("#pwModal")); toast("Passwort geändert – andere Geräte wurden abgemeldet", "success", 5000);
+    } catch (err) { msg.textContent = err.message; }
+    finally { btn.classList.remove("busy"); }
   });
 
-  // Lesezeichen
-  const base = new URL("api/add", location.href).href;
-  const bm = (kind, fmt) => `javascript:(()=>{window.open('${base}?kind=${kind}&format=${fmt}&url='+encodeURIComponent(location.href),'_blank')})()`;
-  $("#bmVideo").href = bm("video", "mp4");
-  $("#bmAudio").href = bm("audio", "mp3");
-  $$("#bmVideo, #bmAudio").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); toast("In die Lesezeichenleiste ziehen 😉", "info"); }));
+  // --------------------------------------------- benutzerverwaltung
+  const CHECK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+  function permGrid(container, selected) {
+    container.replaceChildren();
+    for (const [key, label] of Object.entries(state.permLabels)) {
+      const l = el("label", "perm" + (key === "admin" ? " admin-perm" : ""));
+      const cb = el("input"); cb.type = "checkbox"; cb.value = key; cb.checked = selected.includes(key);
+      const box = el("span", "box-t"); box.innerHTML = CHECK;
+      l.append(cb, box, el("span", "", label));
+      container.appendChild(l);
+    }
+    const sync = () => {
+      const isAdmin = $('input[value="admin"]', container).checked;
+      $$("input", container).forEach((c) => { if (c.value !== "admin") { c.disabled = isAdmin; if (isAdmin) c.checked = true; } });
+    };
+    container.addEventListener("change", sync); sync();
+  }
+  const readPerms = (container) => {
+    const admin = $('input[value="admin"]', container).checked;
+    return admin ? ["admin"] : $$("input:checked", container).map((c) => c.value);
+  };
 
-  // ------------------------------------------------------------------ start
-  // Link aus ?url=… (z. B. Share-Target) übernehmen
-  const qp = new URLSearchParams(location.search);
-  if (qp.get("url")) { urlEl.value = qp.get("url"); history.replaceState(null, "", location.pathname); }
+  async function loadUsers() {
+    const box = $("#usersList");
+    try {
+      const data = await api("users");
+      state.permLabels = data.permissions;
+      box.replaceChildren(...data.users.map((u, i) => userCard(u, i)));
+      permGrid($("#nuPerms"), ["download", "files", "delete"]);
+    } catch (err) { toast(err.message, "error"); }
+  }
 
-  setKind(state.kind, false);
-  setFilter(state.filter);
-  requestAnimationFrame(() => { moveIndicator(seg, segInd); moveIndicator(tabs, tabInd); });
-  document.fonts && document.fonts.ready.then(() => { moveIndicator(seg, segInd); moveIndicator(tabs, tabInd); });
-  connect();
-  loadInfo();
-  loadStorage();
-  setInterval(loadStorage, 60000);
-  autosize();
+  function userCard(u, i) {
+    const me = u.username.toLowerCase() === state.me.username.toLowerCase();
+    const card = el("div", "u-card" + (u.disabled ? " disabled" : "")); card.style.setProperty("--i", i);
+    const top = el("div", "u-top");
+    const name = el("div", "u-name"); const b = el("b", "", u.username);
+    if (u.admin) b.appendChild(el("span", "pill on", "Admin"));
+    if (me) b.appendChild(el("span", "pill", "Du"));
+    if (u.disabled) b.appendChild(el("span", "pill", "Gesperrt"));
+    name.append(b, el("small", "", `Letzte Anmeldung: ${fmtDate(u.last_login)}`));
+    const acts = el("div", "u-acts");
+    const edit = el("button", "btn ghost small", "Bearbeiten"); edit.type = "button";
+    edit.addEventListener("click", () => card.classList.toggle("open"));
+    acts.appendChild(edit);
+    top.append(el("span", "avatar", u.username.slice(0, 2).toUpperCase()), name, acts);
+
+    const panel = el("div", "u-perms");
+    panel.appendChild(el("span", "label", "Rechte"));
+    const grid = el("div", "perm-grid"); permGrid(grid, u.permissions); panel.appendChild(grid);
+    if (me) $$("input", grid).forEach((c) => { if (c.value === "admin") c.disabled = true; });
+    const row = el("div", "row-acts");
+    const save = el("button", "btn accent small", "Rechte speichern"); save.type = "button";
+    save.addEventListener("click", async () => {
+      try { await api(`users/${encodeURIComponent(u.username)}`, { method: "PATCH", body: { permissions: readPerms(grid) } }); toast(`Rechte von ${u.username} gespeichert`, "success"); loadUsers(); }
+      catch (err) { toast(err.message, "error"); }
+    });
+    const pwIn = el("input", "input"); pwIn.type = "password"; pwIn.placeholder = "Neues Passwort setzen"; pwIn.autocomplete = "new-password"; pwIn.style.maxWidth = "230px"; pwIn.style.padding = "8px 10px"; pwIn.style.fontSize = "14px";
+    const pwBtn = el("button", "btn ghost small", "Passwort setzen"); pwBtn.type = "button";
+    pwBtn.addEventListener("click", async () => {
+      if (pwIn.value.length < 8) { toast("Mindestens 8 Zeichen", "error"); return; }
+      pwBtn.classList.add("busy");
+      try { await api(`users/${encodeURIComponent(u.username)}`, { method: "PATCH", body: { password: pwIn.value } }); pwIn.value = ""; toast(`Passwort von ${u.username} geändert – alle Sitzungen beendet`, "success"); }
+      catch (err) { toast(err.message, "error"); }
+      finally { pwBtn.classList.remove("busy"); }
+    });
+    row.append(save, pwIn, pwBtn);
+    if (!me) {
+      const lock = el("button", "btn ghost small", u.disabled ? "Entsperren" : "Sperren"); lock.type = "button";
+      lock.addEventListener("click", async () => {
+        try { await api(`users/${encodeURIComponent(u.username)}`, { method: "PATCH", body: { disabled: !u.disabled } }); toast(u.disabled ? "Konto entsperrt" : "Konto gesperrt & abgemeldet", "success"); loadUsers(); }
+        catch (err) { toast(err.message, "error"); }
+      });
+      const del = el("button", "btn danger small", "Löschen"); del.type = "button";
+      del.addEventListener("click", async () => {
+        if (!del.classList.contains("confirm")) { del.classList.add("confirm"); del.textContent = "Wirklich löschen?"; setTimeout(() => { del.classList.remove("confirm"); del.textContent = "Löschen"; }, 4000); return; }
+        try { await api(`users/${encodeURIComponent(u.username)}`, { method: "DELETE" }); toast(`${u.username} gelöscht`, "success"); loadUsers(); }
+        catch (err) { toast(err.message, "error"); }
+      });
+      row.append(lock, del);
+    }
+    panel.appendChild(row);
+    card.append(top, panel);
+    return card;
+  }
+
+  $("#newUserForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const msg = $("#nuMsg"); msg.textContent = "";
+    const btn = $("button[type=submit]", e.target); btn.classList.add("busy");
+    try {
+      await api("users", { method: "POST", body: { username: $("#nuName").value.trim(), password: $("#nuPass").value, permissions: readPerms($("#nuPerms")) } });
+      toast(`Konto „${$("#nuName").value.trim()}“ angelegt`, "success");
+      const r = btn.getBoundingClientRect(); fx(r.left + r.width / 2, r.top, 30);
+      e.target.reset(); loadUsers();
+    } catch (err) { msg.textContent = err.message; }
+    finally { btn.classList.remove("busy"); }
+  });
+
+  // --------------------------------------------------------------- start
+  async function boot() {
+    let me;
+    try { me = await api("auth/me"); } catch { return; }
+    state.me = me.user; state.permLabels = me.permissions;
+    $("#userName").textContent = me.user.username;
+    $("#userMenuName").textContent = me.user.username;
+    $("#userAvatar").textContent = me.user.username.slice(0, 2).toUpperCase();
+    $("#userRole").textContent = me.user.admin ? "Administrator" : "Benutzer";
+    $("#menuUsers").hidden = !can("admin");
+    $("#deck").hidden = !can("download");
+    $("#clearDone").hidden = !can("delete");
+    $("#secStorage").hidden = !can("storage");
+    $("#secUpdate").hidden = !can("settings");
+    $("#secCookies").hidden = !can("settings");
+    $("#secBookmarks").hidden = !can("download");
+    $("#settingsBtn").hidden = !(can("storage") || can("settings") || can("download"));
+    $("#footStorage").hidden = !can("storage");
+
+    const qp = new URLSearchParams(location.search);
+    if (qp.get("url")) {
+      urlEl.value = qp.get("url");
+      if (qp.get("kind") === "audio" || qp.get("kind") === "video") { state.kind = qp.get("kind"); }
+      if (/soundcloud\.com\//i.test(urlEl.value)) state.source = "soundcloud";
+      history.replaceState(null, "", location.pathname);
+      setTimeout(() => toast("Link übernommen – mit „Laden“ starten"), 600);
+    }
+    setSource(state.source, false);
+    setKind(state.kind, false);
+    setFilter(state.filter);
+    autosize(); updateMode();
+    document.fonts && document.fonts.ready.then(moveKindSlider);
+    connect(); loadInfo();
+    if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
+  }
+  boot();
 })();

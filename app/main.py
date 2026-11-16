@@ -2,19 +2,18 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
 import json
 import logging
 import os
+import random
 import re
-import secrets
 import shutil
 import subprocess
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from typing import Any
+from urllib.parse import quote, urlencode, urlparse
 
 import yt_dlp
 from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile
@@ -22,7 +21,10 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .downloader import AUDIO_FORMATS, AUDIO_QUALITIES, VIDEO_FORMATS, VIDEO_QUALITIES, Options, manager
+from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, users
+from .downloader import (AUDIO_FORMATS, AUDIO_QUALITIES, SEARCH_PREFIX, VIDEO_FORMATS, VIDEO_QUALITIES, Item,
+                         Options, manager)
+from .downloader import search as search_media
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("scobetube")
@@ -30,9 +32,15 @@ log = logging.getLogger("scobetube")
 STATIC_DIR = Path(__file__).parent / "static"
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 
+# scrypt braucht ~64 MB RAM pro Prüfung – parallele Prüfungen begrenzen
+_hash_slots = asyncio.Semaphore(2)
+_setup_lock = asyncio.Lock()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    users.load()
     manager.start(asyncio.get_running_loop())
     log.info("ScobeTube %s gestartet – yt-dlp %s – Downloads: %s",
              config.APP_VERSION, yt_dlp.version.__version__, config.DOWNLOAD_DIR)
@@ -40,30 +48,287 @@ async def lifespan(_: FastAPI):
     manager.save()
 
 
-app = FastAPI(title="ScobeTube", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="ScobeTube", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 api = APIRouter(prefix="/api")
 
 
-# ------------------------------------------------------------------ auth
+# ------------------------------------------------------- sicherheit
+PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
+                "/api/auth/setup"}
+PUBLIC_STATIC = {"/static/style.css", "/static/login.css", "/static/login.js", "/static/icon.svg"}
+UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+CSP = ("default-src 'self'; "
+       "script-src 'self'; "
+       "style-src 'self' https://fonts.googleapis.com; "
+       "font-src 'self' https://fonts.gstatic.com; "
+       "img-src 'self' data: https:; "
+       "connect-src 'self'; "
+       "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+
+
+def _local_path(request: Request) -> str:
+    path = request.url.path
+    root = request.scope.get("root_path", "")
+    if root and path.startswith(root):
+        path = path[len(root):] or "/"
+    return path
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
+
+
+def _same_origin(request: Request) -> bool:
+    """Schutz vor CSRF: schreibende Anfragen müssen von unserer eigenen Seite kommen."""
+    if request.headers.get("x-scobetube") != "1":
+        return False
+    if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        return False
+    origin = request.headers.get("origin")
+    if origin:
+        host = request.headers.get("host", "")
+        if urlparse(origin).netloc.lower() != host.lower():
+            return False
+    return True
+
+
 @app.middleware("http")
-async def basic_auth(request: Request, call_next):
-    if config.AUTH_USER and config.AUTH_PASSWORD and not request.url.path.endswith("/healthz"):
-        ok = False
-        header = request.headers.get("authorization", "")
-        if header.lower().startswith("basic "):
-            try:
-                user, _, pw = base64.b64decode(header[6:]).decode("utf-8").partition(":")
-                ok = secrets.compare_digest(user, config.AUTH_USER) and secrets.compare_digest(pw, config.AUTH_PASSWORD)
-            except (binascii.Error, UnicodeDecodeError):
-                ok = False
-        if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="ScobeTube"'})
-    return await call_next(request)
+async def security(request: Request, call_next):
+    path = _local_path(request)
+    request.state.user = None
+    request.state.session_key = None
+
+    if request.method in UNSAFE_METHODS and not _same_origin(request):
+        response: Response = JSONResponse({"detail": "Anfrage abgelehnt (CSRF-Schutz)"}, status_code=403)
+    else:
+        user, key = users.session_user(request.cookies.get(COOKIE_NAME))
+        request.state.user, request.state.session_key = user, key
+        public = path in PUBLIC_PATHS or path in PUBLIC_STATIC
+        if user or public:
+            response = await call_next(request)
+        elif path.startswith("/api/") or path.startswith("/static/"):
+            response = JSONResponse({"detail": "Nicht angemeldet"}, status_code=401)
+        else:
+            # relative Weiterleitung – funktioniert auch hinter einem URL-Präfix
+            target = "login"
+            if path == "/" and request.url.query:
+                target += "?" + urlencode({"next": request.url.query})
+            response = RedirectResponse(target, status_code=303)
+    for k, v in SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    if path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
-# ------------------------------------------------------------------- api
+def _user(request: Request) -> User:
+    user = request.state.user
+    if not user:
+        raise HTTPException(401, "Nicht angemeldet")
+    return user
+
+
+def _need(request: Request, perm: str) -> User:
+    user = _user(request)
+    if not user.has(perm):
+        raise HTTPException(403, f"Dafür fehlt dir das Recht „{PERMISSIONS[perm]}“")
+    return user
+
+
+def _visible(user: User):
+    if user.has("view_all"):
+        return lambda item: True
+    name = user.username.lower()
+    return lambda item: (item.owner or "").lower() == name
+
+
+def _item_for(user: User, item_id: str) -> Item:
+    item = manager.get(item_id)
+    if not item or not _visible(user)(item):
+        raise HTTPException(404, "Nicht gefunden")
+    return item
+
+
+def _set_session_cookie(request: Request, response: Response, token: str, ttl: int | None) -> None:
+    secure = config.COOKIE_SECURE == "true" or (config.COOKIE_SECURE == "auto" and request.url.scheme == "https")
+    response.set_cookie(COOKIE_NAME, token, max_age=ttl, httponly=True, secure=secure, samesite="strict",
+                        path=(config.URL_PREFIX or "") + "/")
+
+
+async def _json(request: Request) -> dict[str, Any]:
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(400, "Ungültige Anfrage") from None
+    if not isinstance(data, dict):
+        raise HTTPException(400, "Ungültige Anfrage")
+    return data
+
+
+def _me(user: User) -> dict[str, Any]:
+    return {**user.public(), "effective": user.effective_permissions()}
+
+
+# ------------------------------------------------------------ anmeldung
+@api.get("/auth/status")
+async def auth_status(request: Request):
+    user = request.state.user
+    return {"setup": users.needs_setup, "user": _me(user) if user else None}
+
+
+@api.post("/auth/setup")
+async def auth_setup(request: Request):
+    data = await _json(request)
+    async with _setup_lock:
+        if not users.needs_setup:
+            raise HTTPException(409, "Es gibt bereits einen Administrator")
+        try:
+            async with _hash_slots:
+                user = await asyncio.to_thread(users.create, str(data.get("username", "")).strip(),
+                                               str(data.get("password", "")), ["admin"])
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+    log.info("Admin-Konto „%s“ eingerichtet (IP %s)", user.username, _client_ip(request))
+    token, ttl = users.create_session(user, False, _client_ip(request), request.headers.get("user-agent", ""))
+    response = JSONResponse({"ok": True, "user": _me(user)})
+    _set_session_cookie(request, response, token, None)
+    return response
+
+
+@api.post("/auth/login")
+async def auth_login(request: Request):
+    data = await _json(request)
+    username = str(data.get("username", "")).strip()[:64]
+    password = str(data.get("password", ""))[:512]
+    remember = bool(data.get("remember"))
+    ip = _client_ip(request)
+
+    wait = limiter.retry_after(ip, username)
+    if wait:
+        mins = max(1, round(wait / 60))
+        raise HTTPException(429, f"Zu viele Fehlversuche. Bitte in {mins} Minute{'n' if mins != 1 else ''} erneut versuchen.")
+    async with _hash_slots:
+        user = await asyncio.to_thread(users.authenticate, username, password)
+    if not user:
+        limiter.failed(ip, username)
+        log.warning("Fehlgeschlagene Anmeldung für „%s“ von %s", username, ip)
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+        raise HTTPException(401, "Benutzername oder Passwort falsch")
+    limiter.succeeded(ip, username)
+    token, ttl = users.create_session(user, remember, ip, request.headers.get("user-agent", ""))
+    log.info("Anmeldung: %s von %s", user.username, ip)
+    response = JSONResponse({"ok": True, "user": _me(user)})
+    _set_session_cookie(request, response, token, ttl if remember else None)
+    return response
+
+
+@api.post("/auth/logout")
+async def auth_logout(request: Request):
+    if request.state.session_key:
+        users.revoke(request.state.session_key)
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(COOKIE_NAME, path=(config.URL_PREFIX or "") + "/")
+    return response
+
+
+@api.get("/auth/me")
+async def auth_me(request: Request):
+    return {"user": _me(_user(request)), "permissions": PERMISSIONS}
+
+
+@api.post("/auth/password")
+async def change_password(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    current, new = str(data.get("current", "")), str(data.get("new", ""))
+    async with _hash_slots:
+        ok = await asyncio.to_thread(users.authenticate, user.username, current)
+    if not ok:
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+        raise HTTPException(400, "Das aktuelle Passwort ist falsch")
+    try:
+        async with _hash_slots:
+            await asyncio.to_thread(users.update, user.username, password=new)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    # Alle Sitzungen wurden beendet – hier direkt neu anmelden
+    token, ttl = users.create_session(user, False, _client_ip(request), request.headers.get("user-agent", ""))
+    response = JSONResponse({"ok": True})
+    _set_session_cookie(request, response, token, None)
+    return response
+
+
+# ---------------------------------------------------- benutzerverwaltung
+@api.get("/users")
+async def list_users(request: Request):
+    _need(request, "admin")
+    return {"users": [u.public() for u in users.list()], "permissions": PERMISSIONS}
+
+
+@api.post("/users")
+async def create_user(request: Request):
+    admin = _need(request, "admin")
+    data = await _json(request)
+    try:
+        async with _hash_slots:
+            user = await asyncio.to_thread(users.create, str(data.get("username", "")).strip(),
+                                           str(data.get("password", "")), data.get("permissions", []))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    log.info("%s hat Benutzer „%s“ angelegt", admin.username, user.username)
+    return user.public()
+
+
+@api.patch("/users/{username}")
+async def update_user(username: str, request: Request):
+    admin = _need(request, "admin")
+    data = await _json(request)
+    if username.lower() == admin.username.lower() and (data.get("disabled") or
+                                                       ("permissions" in data and "admin" not in data["permissions"])):
+        raise HTTPException(400, "Du kannst dich nicht selbst sperren oder dir die Admin-Rechte nehmen")
+    try:
+        async with _hash_slots:
+            user = await asyncio.to_thread(
+                users.update, username,
+                permissions=data.get("permissions") if "permissions" in data else None,
+                disabled=data.get("disabled") if "disabled" in data else None,
+                password=str(data["password"]) if data.get("password") else None)
+    except KeyError:
+        raise HTTPException(404, "Benutzer nicht gefunden") from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    log.info("%s hat Benutzer „%s“ geändert", admin.username, user.username)
+    return user.public()
+
+
+@api.delete("/users/{username}")
+async def delete_user(username: str, request: Request):
+    admin = _need(request, "admin")
+    if username.lower() == admin.username.lower():
+        raise HTTPException(400, "Du kannst dich nicht selbst löschen")
+    try:
+        users.delete(username)
+    except KeyError:
+        raise HTTPException(404, "Benutzer nicht gefunden") from None
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    log.info("%s hat Benutzer „%s“ gelöscht", admin.username, username)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ api
 @api.get("/info")
-async def info():
+async def info(request: Request):
+    _user(request)
     return {
         "version": config.APP_VERSION,
         "ytdlp": yt_dlp.version.__version__,
@@ -78,8 +343,8 @@ async def info():
 
 
 @api.get("/items")
-async def items():
-    return manager.snapshot()
+async def items(request: Request):
+    return manager.snapshot(_visible(_user(request)))
 
 
 def _extract_urls(text: str) -> list[str]:
@@ -90,71 +355,83 @@ def _extract_urls(text: str) -> list[str]:
         if u not in seen:
             seen.add(u)
             out.append(u)
-    return out
+    return out[:200]
 
 
 @api.post("/add")
 async def add(request: Request):
-    data = await request.json()
-    urls = _extract_urls(data.get("urls") or data.get("url") or "")
+    user = _need(request, "download")
+    data = await _json(request)
+    urls = _extract_urls(str(data.get("urls") or data.get("url") or ""))
     if not urls:
         raise HTTPException(400, "Keine gültige URL gefunden")
     try:
         options = Options.parse(data)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
-    created = manager.add(urls, options)
+    created = manager.add(urls, options, owner=user.username)
     return {"added": [i.id for i in created]}
 
 
 @api.get("/add")
-async def add_get(url: str, kind: str = "video", format: str = "", quality: str = "best", redirect: bool = True):
-    """Für Lesezeichen / iOS-Kurzbefehle: /api/add?url=...&kind=audio&format=mp3"""
-    urls = _extract_urls(url)
-    if not urls:
-        raise HTTPException(400, "Keine gültige URL gefunden")
+async def add_get(url: str = "", kind: str = "", format: str = "", quality: str = ""):
+    """Lesezeichen / Kurzbefehle: füllt nur das Formular aus – gestartet wird per Klick (CSRF-sicher)."""
+    params = {k: v for k, v in {"url": url, "kind": kind, "format": format, "quality": quality}.items() if v}
+    return RedirectResponse("../?" + urlencode(params), status_code=303)
+
+
+@api.get("/search")
+async def search(request: Request, q: str, source: str = "soundcloud"):
+    _need(request, "download")
+    q = q.strip()[:200]
+    if not q:
+        raise HTTPException(400, "Bitte einen Suchbegriff eingeben")
+    if source not in SEARCH_PREFIX:
+        raise HTTPException(400, "Unbekannte Quelle")
     try:
-        options = Options.parse({"kind": kind, "format": format, "quality": quality})
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-    manager.add(urls, options)
-    if redirect:
-        return RedirectResponse(config.URL_PREFIX + "/", status_code=303)
-    return {"ok": True}
+        results = await asyncio.wait_for(asyncio.to_thread(search_media, source, q), timeout=45)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Die Suche hat zu lange gedauert") from None
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Suche fehlgeschlagen: {str(e)[:300]}") from e
+    return {"results": results}
 
 
 @api.post("/items/{item_id}/cancel")
-async def cancel(item_id: str):
+async def cancel(item_id: str, request: Request):
+    _item_for(_need(request, "download"), item_id)
     if not manager.cancel(item_id):
-        raise HTTPException(404, "Nicht gefunden oder nicht aktiv")
+        raise HTTPException(409, "Download ist nicht aktiv")
     return {"ok": True}
 
 
 @api.post("/items/{item_id}/retry")
-async def retry(item_id: str):
+async def retry(item_id: str, request: Request):
+    _item_for(_need(request, "download"), item_id)
     if not manager.retry(item_id):
-        raise HTTPException(404, "Nicht gefunden oder noch aktiv")
+        raise HTTPException(409, "Download läuft noch")
     return {"ok": True}
 
 
 @api.delete("/items/{item_id}")
-async def delete(item_id: str, delete_file: bool = False):
-    if not manager.remove(item_id, delete_file):
-        raise HTTPException(404, "Nicht gefunden")
+async def delete(item_id: str, request: Request, delete_file: bool = False):
+    _item_for(_need(request, "delete"), item_id)
+    manager.remove(item_id, delete_file)
     return {"ok": True}
 
 
 @api.post("/clear")
 async def clear(request: Request):
-    data = await request.json()
-    n = manager.clear(data.get("which", "done"), bool(data.get("delete_files")))
+    user = _need(request, "delete")
+    data = await _json(request)
+    n = manager.clear(str(data.get("which", "done")), bool(data.get("delete_files")), _visible(user))
     return {"removed": n}
 
 
 @api.get("/files/{item_id}")
-async def file(item_id: str, inline: bool = False):
-    item = manager.get(item_id)
-    path = manager.file_path(item) if item else None
+async def file(item_id: str, request: Request, inline: bool = False):
+    item = _item_for(_need(request, "files"), item_id)
+    path = manager.file_path(item)
     if not path or not path.is_file():
         raise HTTPException(404, "Datei nicht gefunden")
     disp = "inline" if inline else "attachment"
@@ -164,19 +441,33 @@ async def file(item_id: str, inline: bool = False):
 
 @api.get("/events")
 async def events(request: Request):
+    _user(request)
+    token = request.cookies.get(COOKIE_NAME)
     q = manager.subscribe()
 
     async def stream():
         try:
-            yield _sse("init", {"items": manager.snapshot()})
+            user, _ = users.session_user(token)
+            if not user:
+                return
+            yield _sse("init", {"items": manager.snapshot(_visible(user))})
             while True:
                 if await request.is_disconnected():
                     break
                 try:
                     event, data = await asyncio.wait_for(q.get(), timeout=15)
-                    yield _sse(event, data)
                 except asyncio.TimeoutError:
+                    event, data = None, None
+                # Sitzung und Rechte bei jedem Ereignis neu prüfen
+                user, _ = users.session_user(token)
+                if not user:
+                    yield _sse("logout", {})
+                    break
+                if event is None:
                     yield ": ping\n\n"
+                    continue
+                if user.has("view_all") or (data.get("owner") or "").lower() == user.username.lower():
+                    yield _sse(event, data)
         finally:
             manager.unsubscribe(q)
 
@@ -189,24 +480,24 @@ def _sse(event: str, data) -> str:
 
 
 @api.post("/cookies")
-async def upload_cookies(file: UploadFile):
-    content = await file.read()
+async def upload_cookies(file: UploadFile, request: Request):
+    _need(request, "settings")
+    content = await file.read(5 * 1024 * 1024 + 1)
     if len(content) > 5 * 1024 * 1024:
         raise HTTPException(400, "Datei zu groß")
     text = content.decode("utf-8", errors="replace")
     if "\t" not in text:
         raise HTTPException(400, "Das sieht nicht nach einer cookies.txt (Netscape-Format) aus")
     config.COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    config.COOKIES_FILE.write_text(text, "utf-8")
-    try:
-        os.chmod(config.COOKIES_FILE, 0o600)
-    except OSError:
-        pass
+    fd = os.open(config.COOKIES_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
     return {"ok": True}
 
 
 @api.delete("/cookies")
-async def delete_cookies():
+async def delete_cookies(request: Request):
+    _need(request, "settings")
     config.COOKIES_FILE.unlink(missing_ok=True)
     return {"ok": True}
 
@@ -224,7 +515,8 @@ def _dir_size(root: Path) -> tuple[int, int]:
 
 
 @api.get("/storage")
-async def storage():
+async def storage(request: Request):
+    _user(request)
     used, files = await asyncio.to_thread(_dir_size, config.DOWNLOAD_DIR)
     disk = shutil.disk_usage(config.DOWNLOAD_DIR)
     return {"downloads": used, "files": files, "disk_total": disk.total, "disk_free": disk.free,
@@ -232,8 +524,10 @@ async def storage():
 
 
 @api.post("/storage/purge")
-async def purge():
+async def purge(request: Request):
+    user = _need(request, "storage")
     count, freed = await asyncio.to_thread(manager.purge_downloads)
+    log.info("%s hat den Speicher geleert (%d Dateien)", user.username, count)
     return {"files": count, "freed": freed}
 
 
@@ -241,8 +535,9 @@ _updating = False
 
 
 @api.post("/update-ytdlp")
-async def update_ytdlp():
+async def update_ytdlp(request: Request):
     global _updating
+    _need(request, "settings")
     if _updating:
         raise HTTPException(409, "Update läuft bereits")
     if manager.active_count():
@@ -294,14 +589,21 @@ async def manifest():
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/login")
+async def login_page(request: Request):
+    if request.state.user:
+        return RedirectResponse("./", status_code=303)
+    return FileResponse(STATIC_DIR / "login.html", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
 
 # Unterstützung für einen URL-Präfix (z. B. hinter einem Reverse-Proxy unter /scobetube)
 if config.URL_PREFIX:
-    root = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+    root = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     root.mount(config.URL_PREFIX, app)
 
     @root.get("/")
