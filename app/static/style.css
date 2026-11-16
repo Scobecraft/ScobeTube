@@ -34,6 +34,7 @@ body {
   transition: --accent-h .9s var(--ease);
 }
 body[data-source="soundcloud"] { --accent-h: 18; }
+body[data-source="spotify"] { --accent-h: 141; }
 
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -213,10 +214,11 @@ body.busy .eq span { background: var(--accent); animation: eq .9s ease-in-out in
 .src-switch button svg { font-size: 20px; }
 .src-switch button.active { color: var(--accent-ink); }
 .src-switch .slider {
-  position: absolute; top: 0; bottom: 0; left: 0; width: 50%; background: var(--accent);
+  position: absolute; top: 0; bottom: 0; left: 0; width: calc(100% / 3); background: var(--accent);
   transition: transform .55s var(--spring);
 }
 .src-switch[data-pos="1"] .slider { transform: translateX(100%); }
+.src-switch[data-pos="2"] .slider { transform: translateX(200%); }
 .src-switch button + button { border-left: 2px solid var(--line); }
 
 .deck-body { position: relative; padding: 22px; }
@@ -282,7 +284,9 @@ body.busy .eq span { background: var(--accent); animation: eq .9s ease-in-out in
 .toggle input:checked + .box-t svg { stroke-dashoffset: 0; }
 .toggle input:focus-visible + .box-t { outline: 2px solid var(--paper); outline-offset: 2px; }
 .toggle:hover { color: var(--paper); }
-body[data-source="soundcloud"] .yt-only, body[data-kind="audio"] .video-only { display: none; }
+body[data-source="soundcloud"] .yt-only, body[data-source="spotify"] .yt-only, body[data-kind="audio"] .video-only { display: none; }
+.sp-note { display: none; margin: 16px 0 0; padding: 12px 14px; border-left: 4px solid var(--accent); background: hsl(var(--accent-h) 100% 50% / .07); font-size: 13.5px; color: var(--paper-2); }
+body[data-source="spotify"] .sp-note { display: block; animation: fadeUp .45s var(--ease); }
 
 /* SoundCloud-Welle */
 .sc-wave { display: none; align-items: center; gap: 3px; height: 34px; margin-top: 18px; }
@@ -358,6 +362,7 @@ body[data-source="soundcloud"] .sc-wave { display: flex; }
 .media .src:empty { display: none; }
 .media .src.soundcloud { background: var(--sc); color: #fff; }
 .media .src.youtube { background: #ff2a2a; color: #fff; }
+.media .src.spotify { background: #1ed760; color: #0b0b0b; }
 
 /* Fortschrittsring */
 .ring { position: absolute; inset: 0; margin: auto; width: 74px; height: 74px; z-index: 2; opacity: 0; transform: scale(.6); transition: opacity .3s, transform .4s var(--spring); }
@@ -440,6 +445,9 @@ body[data-source="soundcloud"] .sc-wave { display: flex; }
 .act.retry:hover svg { transform: rotate(-270deg); }
 .act.retry svg { transition: transform .6s var(--ease); }
 .item[data-can-delete="1"] .del { display: grid; }
+.item[data-has-link="1"] .open { display: grid; }
+.act.open:hover svg { transform: translate(2px, -2px); }
+.act.open svg { transition: transform .3s var(--spring); }
 .item[data-status="done"][data-can-files="1"] .dl { display: grid; animation: pop .5s var(--spring); }
 .item[data-can-dl="1"][data-status="error"] .retry, .item[data-can-dl="1"][data-status="cancelled"] .retry { display: grid; }
 .item[data-can-dl="1"][data-status="preparing"] .cancel, .item[data-can-dl="1"][data-status="queued"] .cancel,
@@ -629,7 +637,8 @@ body[data-source="soundcloud"] .sc-wave { display: flex; }
   .go { height: 58px; }
   .opts { grid-template-columns: 1fr; }
   .deck-body { padding: 16px; }
-  .src-switch button { font-size: 12px; padding: 14px 8px; }
+  .src-switch button { font-size: 11px; padding: 14px 4px; gap: 6px; }
+  .src-switch button svg { font-size: 16px; }
   .item { grid-template-columns: 120px 1fr; gap: 14px; padding: 12px; }
   .actions { grid-column: 1 / -1; justify-content: flex-end; }
   .title { font-size: 15px; }

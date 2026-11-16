@@ -10,14 +10,14 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled
 
-from . import config
+from . import config, spotify
 
 log = logging.getLogger("scobetube")
 
@@ -35,7 +35,7 @@ class Options:
     kind: str = "video"          # video | audio
     format: str = "mp4"
     quality: str = "best"
-    playlist: bool = True
+    playlist: bool = False
     subtitles: bool = False
     thumbnail: bool = True
 
@@ -55,7 +55,7 @@ class Options:
             kind=kind,
             format=fmt,
             quality=quality,
-            playlist=bool(data.get("playlist", True)),
+            playlist=bool(data.get("playlist", False)),
             subtitles=bool(data.get("subtitles", False)),
             thumbnail=bool(data.get("thumbnail", True)),
         )
@@ -83,7 +83,10 @@ class Item:
     created: float = field(default_factory=time.time)
     finished: float | None = None
     owner: str | None = None      # Benutzername
-    source: str | None = None     # z. B. "youtube", "soundcloud"
+    source: str | None = None     # z. B. "youtube", "soundcloud", "spotify"
+    note: str | None = None       # kurzer Hinweis zum aktuellen Schritt
+    spotify: dict[str, Any] | None = None   # Spotify-Metadaten (Titel, Interpreten, Album, Cover …)
+    match_url: str | None = None  # gefundener Song auf YouTube Music
 
     def public(self) -> dict[str, Any]:
         d = asdict(self)
@@ -287,6 +290,9 @@ class Manager:
         self.resolver.submit(self._resolve, item)
 
     def _resolve(self, item: Item) -> None:
+        if spotify.parse_url(item.url):
+            self._resolve_spotify(item)
+            return
         opts = self._base_opts()
         opts.update({"extract_flat": "in_playlist", "skip_download": True,
                      "noplaylist": not item.options.playlist})
@@ -336,6 +342,74 @@ class Manager:
         item.url = info.get("webpage_url") or item.url
         self._enqueue(item)
 
+    def _resolve_spotify(self, item: Item) -> None:
+        # Spotify liefert nur Musik → immer Audio
+        o = item.options
+        if o.kind != "audio" or o.format not in AUDIO_FORMATS:
+            item.options = replace(o, kind="audio", format="mp3", quality="best" if o.kind != "audio" else o.quality)
+        try:
+            data = spotify.resolve(item.url)
+        except Exception as e:  # noqa: BLE001
+            self._fail(item, e)
+            return
+        if item.status == "cancelled":
+            return
+        tracks = data["tracks"]
+        if not tracks:
+            self._fail(item, Exception("Keine Songs gefunden (privat oder leer?)"))
+            return
+
+        def fill(target: Item, t: dict[str, Any], cover: str | None) -> None:
+            artists = t.get("artists") or []
+            target.spotify = t
+            target.title = f"{', '.join(artists)} - {t['title']}" if artists else (t.get("title") or "")
+            target.uploader = ", ".join(artists) or None
+            target.duration = t.get("duration")
+            target.thumbnail = t.get("cover") or cover
+            target.source = "spotify"
+
+        if data["kind"] == "track":
+            fill(item, tracks[0], data.get("cover"))
+            item.url = f"https://open.spotify.com/track/{tracks[0]['id']}"
+            self._enqueue(item)
+            return
+
+        if config.PLAYLIST_LIMIT > 0:
+            tracks = tracks[:config.PLAYLIST_LIMIT]
+        ptitle = data["title"] + (" (Top-Songs)" if data["kind"] == "artist" else "")
+        album_cover = data.get("cover") if data["kind"] == "album" else None
+        with self.lock:
+            self.items.pop(item.id, None)
+        self.emit("removed", {"id": item.id, "owner": item.owner})
+        for t in tracks:
+            child = Item(url=f"https://open.spotify.com/track/{t['id']}", options=item.options, playlist=ptitle,
+                         owner=item.owner)
+            if data["kind"] == "album":
+                t = {**t, "album": data["title"]}
+            fill(child, t, album_cover)
+            with self.lock:
+                self.items[child.id] = child
+            self.emit("added", child.public())
+            self._enqueue(child)
+        self._schedule_save()
+
+    def _prepare_spotify(self, item: Item) -> str:
+        """Ergänzt Metadaten und sucht den passenden Song. Gibt die Download-URL zurück."""
+        if item.match_url:
+            return item.match_url
+        item.note = "Suche den Song auf YouTube Music…"
+        self._update(item, persist=False)
+        details = spotify.track_details(item.spotify or {})
+        item.spotify = details
+        item.thumbnail = details.get("cover") or item.thumbnail
+        match = spotify.find_match(details, self._base_opts())
+        if not match:
+            raise Exception("Kein passender Song auf YouTube Music gefunden")
+        item.match_url = match
+        item.note = None
+        self._update(item)
+        return match
+
     # ------------------------------------------------------------- download
     def _enqueue(self, item: Item) -> None:
         item.status = "queued"
@@ -354,8 +428,15 @@ class Manager:
         self._update(item)
         tmp = self.tmp_dir / item.id
         try:
+            url = item.url
+            if item.spotify is not None:
+                url = self._prepare_spotify(item)
+                if flag.is_set():
+                    raise DownloadCancelled("Abgebrochen")
             with yt_dlp.YoutubeDL(self._download_opts(item)) as ydl:
-                info = ydl.extract_info(item.url, download=True)
+                if item.spotify is not None:
+                    ydl.add_post_processor(spotify.SpotifyMetadataPP(item.spotify), when="pre_process")
+                info = ydl.extract_info(url, download=True)
             path = None
             reqs = (info or {}).get("requested_downloads") or []
             if reqs:
@@ -369,7 +450,8 @@ class Manager:
                     item.filename = p.name
                 if p.exists():
                     item.filesize = p.stat().st_size
-            if info:
+            item.note = None
+            if info and item.spotify is None:
                 item.title = info.get("title") or item.title
                 item.thumbnail = item.thumbnail or _thumb(info)
             item.status = "done"
@@ -433,6 +515,7 @@ class Manager:
         elif "Video unavailable" in msg:
             msg = "Video nicht verfügbar (gelöscht, privat oder in deinem Land gesperrt)."
         item.status = "error"
+        item.note = None
         item.error = msg[:1000]
         item.speed = item.eta = None
         item.finished = time.time()
@@ -461,6 +544,8 @@ class Manager:
         if not item or item.status not in FINISHED:
             return False
         item.finished = None
+        if item.status == "error":
+            item.match_url = None
         item.filename = None
         item.filesize = None
         if item.title:

@@ -17,6 +17,11 @@
       placeholder: "SoundCloud-Link (Track, Set, Profil) – oder Suchbegriff",
       search: "soundcloud",
     },
+    spotify: {
+      audio: { formats: ["mp3", "m4a", "opus", "flac", "original"], qualities: ["best", "320", "256", "192", "128"] },
+      placeholder: "Spotify-Link: Song, Album, Playlist oder Künstler",
+      search: null,
+    },
   };
   const NO_QUALITY = ["flac", "wav", "original"];
   const STATUS = { preparing: "Analyse", queued: "Wartet", downloading: "Lädt", processing: "Konvertiert", done: "Fertig", error: "Fehler", cancelled: "Abgebrochen" };
@@ -56,7 +61,8 @@
   const fmtDate = (t) => t ? new Date(t * 1000).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "nie";
   const qLabel = (kind, q) => q === "best" ? "Beste" : kind === "video" ? (q === "2160" ? "4K" : q === "1440" ? "2K" : q + "p") : q + "k";
   const fLabel = (f) => f === "original" ? "Original" : f.toUpperCase();
-  const isUrl = (t) => /https?:\/\/\S+/i.test(t);
+  const isUrl = (t) => /https?:\/\/\S+|spotify:(track|album|playlist|artist):/i.test(t);
+  const detectSource = (t) => /open\.spotify\.com\/|spotify:(track|album|playlist|artist):/i.test(t) ? "spotify" : /soundcloud\.com\//i.test(t) ? "soundcloud" : null;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const restart = (node, cls) => { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); };
 
@@ -146,7 +152,7 @@
   }
   addEventListener("resize", moveKindSlider);
 
-  const curKind = () => state.source === "soundcloud" ? "audio" : state.kind;
+  const curKind = () => state.source === "all" ? state.kind : "audio";
   const fmtKey = () => state.source + ":" + curKind();
 
   function renderChips(animate) {
@@ -173,11 +179,11 @@
     document.body.dataset.source = src;
     $$("button", srcSwitch).forEach((b, i) => { b.classList.toggle("active", b.dataset.source === src); if (b.dataset.source === src) srcSwitch.dataset.pos = i; });
     urlEl.placeholder = SOURCES[src].placeholder;
-    $("#playlistLabel").textContent = src === "soundcloud" ? "Ganze Sets & Profile" : "Ganze Playlist";
+    $("#playlistLabel").textContent = src === "soundcloud" ? "Ganze Sets & Profile" : src === "spotify" ? "Ganze Alben & Playlists" : "Ganze Playlist";
     renderChips(animate);
     updateMode();
     requestAnimationFrame(moveKindSlider);
-    if (animate) { const r = srcSwitch.getBoundingClientRect(); fx(r.left + r.width * (src === "soundcloud" ? .75 : .25), r.bottom, 18); }
+    if (animate) { const r = srcSwitch.getBoundingClientRect(); fx(r.left + r.width * ({ all: 1, soundcloud: 3, spotify: 5 }[src] / 6), r.bottom, 18); }
   }
   srcSwitch.addEventListener("click", (e) => { const b = e.target.closest("button[data-source]"); if (b && b.dataset.source !== state.source) setSource(b.dataset.source); });
 
@@ -199,16 +205,18 @@
     $$("#qualityChips .chip").forEach((c) => c.classList.toggle("active", c === b)); restart(b, "pop");
   });
   ["optPlaylist", "optThumb", "optSubs"].forEach((id) => {
-    const c = $("#" + id), saved = store(id);
+    const key = id === "optPlaylist" ? "optPlaylist.v2" : id;
+    const c = $("#" + id), saved = store(key);
     if (saved !== null) c.checked = saved;
-    c.addEventListener("change", () => store(id, c.checked));
+    c.addEventListener("change", () => store(key, c.checked));
   });
 
   // Link oder Suche?
   let lastMode = "link";
   function updateMode() {
     const v = urlEl.value.trim();
-    const mode = !v || isUrl(v) ? "link" : "search";
+    const searchable = !!SOURCES[state.source].search;
+    const mode = !v || isUrl(v) || !searchable ? "link" : "search";
     const hint = $("#modeHint");
     hint.textContent = mode === "search" ? (state.source === "soundcloud" ? "SC-Suche" : "YT-Suche") : "Link";
     hint.classList.toggle("search", mode === "search");
@@ -221,9 +229,11 @@
         $("#goIcon").innerHTML = mode === "search" ? '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>' : '<path d="M12 4v13m0 0-5-5m5 5 5-5M5 21h14"/>';
       }, 180);
     }
-    // SoundCloud-Link erkannt → automatisch umschalten
-    if (state.source === "all" && /soundcloud\.com\//i.test(v) && !/youtu/i.test(v)) {
-      setSource("soundcloud"); toast("SoundCloud-Link erkannt – Audio-Modus aktiv", "info", 2500);
+    // SoundCloud- oder Spotify-Link erkannt → automatisch umschalten
+    const detected = detectSource(v);
+    if (detected && detected !== state.source && !/youtu/i.test(v)) {
+      setSource(detected);
+      toast(detected === "spotify" ? "Spotify-Link erkannt – Spotify-Modus aktiv" : "SoundCloud-Link erkannt – Audio-Modus aktiv", "info", 2500);
     }
   }
   const autosize = () => { urlEl.style.height = "auto"; urlEl.style.height = urlEl.scrollHeight + "px"; };
@@ -261,7 +271,8 @@
     if (!v) { urlEl.focus(); return; }
     const go = $("#goBtn"); go.classList.add("loading");
     try {
-      if (isUrl(v)) { await submitUrls(v); urlEl.value = ""; autosize(); updateMode(); }
+      if (isUrl(v)) { await submitUrls(v.replace(/spotify:(track|album|playlist|artist):([A-Za-z0-9]+)/g, "https://open.spotify.com/$1/$2")); urlEl.value = ""; autosize(); updateMode(); }
+      else if (!SOURCES[state.source].search) throw new Error("Im Spotify-Modus bitte einen Spotify-Link einfügen (Teilen → Link kopieren)");
       else await runSearch(v);
     } catch (err) {
       toast(err.message, "error", 5500);
@@ -310,7 +321,7 @@
     e.preventDefault(); dragDepth = 0; drop.classList.remove("show");
     if (!can("download")) return;
     const t = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-    if (t && isUrl(t)) { if (/soundcloud\.com\//i.test(t)) setSource("soundcloud", false); submitUrls(t).catch((err) => toast(err.message, "error")); }
+    if (t && isUrl(t)) { const d = detectSource(t); if (d) setSource(d, false); submitUrls(t).catch((err) => toast(err.message, "error")); }
     else toast("Das war kein Link", "error");
   });
 
@@ -374,17 +385,20 @@
 
     const p = it.status === "downloading" ? (it.progress || 0) : 0;
     $(".ring .rv", node).style.strokeDashoffset = String(201 * (1 - p / 100));
-    $(".pct", node).textContent = Math.floor(p) + "%";
+    $(".pct", node).textContent = it.note && !p ? "" : Math.floor(p) + "%";
     const on = Math.round(p / 100 * CELLS);
     $$(".cells i", node).forEach((c, i) => { c.classList.toggle("on", i < on - 1 || (on === CELLS && i < CELLS)); c.classList.toggle("head", i === on - 1 && on < CELLS); });
 
     const stats = $(".stats", node); const parts = [];
     const add = (strong, text) => { const s = el("span"); if (strong) s.appendChild(el("b", "", strong)); if (text) s.append((strong ? " " : "") + text); parts.push(s); };
-    if (it.status === "downloading") {
+    if (it.status === "downloading" && it.note && !p) {
+      add("", it.note);
+    } else if (it.status === "downloading") {
       add(`${p.toFixed(1)}%`);
       if (it.total) add("", `${fmtBytes(it.downloaded)} / ${fmtBytes(it.total)}`);
       if (it.speed) add("", `${fmtBytes(it.speed)}/s`);
       if (it.eta != null) add("", `ETA ${fmtTime(it.eta)}`);
+      if (it.note) add("", it.note);
     } else if (it.status === "processing") add("", "Konvertiere & schreibe Metadaten…");
     else if (it.status === "queued") add("", "Wartet auf freien Slot…");
     else if (it.status === "preparing") add("", "Hole Infos…");
@@ -394,6 +408,14 @@
     }
     stats.replaceChildren(...parts);
     $(".err", node).textContent = it.error || "";
+    const open = $(".open", node);
+    const pageUrl = /^https?:\/\//i.test(it.url || "") ? it.url : null;
+    node.dataset.hasLink = pageUrl ? "1" : "0";
+    if (pageUrl) {
+      open.href = pageUrl;
+      const host = it.source === "spotify" ? "Spotify" : it.source === "soundcloud" ? "SoundCloud" : it.source === "youtube" ? "YouTube" : (() => { try { return new URL(pageUrl).hostname.replace(/^www\./, ""); } catch { return "Quelle"; } })();
+      open.title = `Auf ${host} öffnen`;
+    } else open.removeAttribute("href");
     const dl = $(".dl", node);
     if (it.status === "done") dl.href = `api/files/${it.id}`; else dl.removeAttribute("href");
 
@@ -430,6 +452,7 @@
     if (!node) { node = createNode(it); list.prepend(node); }
     updateNode(node, it, prev);
     if (!prev || prev.status !== it.status) schedule();
+    else if (it.status === "downloading") tab.update([...state.items.values()]);
   }
   function removeItem(id) {
     state.items.delete(id);
@@ -466,8 +489,78 @@
     $("#emptyText").textContent = all.length === 0
       ? (can("download") ? "Link oben reinwerfen – oder einfach auf die Seite ziehen." : "Noch keine Downloads sichtbar.")
       : "In dieser Ansicht gibt es keine Einträge.";
-    document.title = c.active ? `(${c.active}) ScobeTube` : "ScobeTube";
+    tab.update(all);
   }
+
+  // --------------------------------------------- tab-titel & favicon
+  const tab = (() => {
+    const NAME = "ScobeTube";
+    let progress = null;          // null = nichts aktiv
+    let label = "";
+    let frame = 0;
+    const favicon = $("#favicon");
+    const baseIcon = favicon.href;
+    const cv = document.createElement("canvas"); cv.width = cv.height = 64;
+    const ctx = cv.getContext("2d");
+    let lastIconKey = "";
+
+    function drawIcon(pct, mode) {
+      const key = mode + ":" + Math.round(pct / 5);
+      if (key === lastIconKey) return;
+      lastIconKey = key;
+      if (mode === "idle") { favicon.href = baseIcon; return; }
+      const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#b9ff33";
+      ctx.clearRect(0, 0, 64, 64);
+      ctx.fillStyle = "#f3f0e7"; ctx.fillRect(8, 8, 54, 54);            // harter Schatten
+      ctx.fillStyle = "#0b0b0c"; ctx.fillRect(2, 2, 54, 54);            // Grund
+      ctx.fillStyle = accent;                                            // Füllstand von unten
+      const h = Math.round(54 * Math.max(.06, pct / 100));
+      ctx.fillRect(2, 56 - h, 54, h);
+      ctx.strokeStyle = "#0b0b0c"; ctx.lineWidth = 3; ctx.strokeRect(2, 2, 54, 54);
+      ctx.fillStyle = "#f3f0e7"; ctx.strokeStyle = "#0b0b0c"; ctx.lineWidth = 5;
+      ctx.font = "900 26px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const t = mode === "proc" ? "⚙" : String(Math.floor(pct));
+      ctx.strokeText(t, 29, 31); ctx.fillText(t, 29, 31);
+      favicon.href = cv.toDataURL("image/png");
+    }
+
+    // Leerlauf: „ScobeTube“ wird Buchstabe für Buchstabe ein- und wieder ausgeblendet
+    const idleFrames = (() => {
+      const f = [];
+      for (let i = 1; i <= NAME.length; i++) f.push(NAME.slice(0, i) + (i < NAME.length ? "▌" : ""));
+      for (let i = 0; i < 8; i++) f.push(NAME);                       // stehen lassen
+      for (let i = NAME.length - 1; i >= 1; i--) f.push(NAME.slice(0, i) + "▌");
+      for (let i = 0; i < 3; i++) f.push(i % 2 ? "▌" : "\u2003");      // kurz blinken
+      return f;
+    })();
+
+    setInterval(() => {
+      frame++;
+      if (progress === null) {
+        document.title = idleFrames[frame % idleFrames.length];
+      } else {
+        // aktiv: Prozent fest, „ScobeTube“ blendet dahinter ein und aus
+        const spin = "◐◓◑◒"[frame % 4];
+        const showName = Math.floor(frame / 6) % 2 === 0;
+        document.title = `${label} ${spin} ${showName ? NAME : "·".repeat(3)}`;
+      }
+    }, 180);
+
+    return {
+      update(items) {
+        const running = items.filter((i) => i.status === "downloading" || i.status === "processing");
+        const waiting = items.filter((i) => i.status === "queued" || i.status === "preparing").length;
+        if (!running.length && !waiting) { progress = null; drawIcon(0, "idle"); return; }
+        if (!running.length) { progress = 0; label = `⏳ ${waiting} wartet`; drawIcon(0, "dl"); return; }
+        const pct = running.reduce((sum, i) => sum + (i.status === "processing" ? 100 : (i.progress || 0)), 0) / running.length;
+        const proc = running.every((i) => i.status === "processing");
+        progress = pct;
+        const more = running.length + waiting > 1 ? ` (${running.length + waiting})` : "";
+        label = proc ? `⚙ Konvertiert${more}` : `${Math.floor(pct)}%${more}`;
+        drawIcon(pct, proc ? "proc" : "dl");
+      },
+    };
+  })();
 
   function setFilter(f) {
     state.filter = f; store("filter", f);
@@ -765,7 +858,7 @@
     if (qp.get("url")) {
       urlEl.value = qp.get("url");
       if (qp.get("kind") === "audio" || qp.get("kind") === "video") { state.kind = qp.get("kind"); }
-      if (/soundcloud\.com\//i.test(urlEl.value)) state.source = "soundcloud";
+      const d = detectSource(urlEl.value); if (d) state.source = d;
       history.replaceState(null, "", location.pathname);
       setTimeout(() => toast("Link übernommen – mit „Laden“ starten"), 600);
     }

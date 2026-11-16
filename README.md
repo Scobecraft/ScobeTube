@@ -15,6 +15,9 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Cookie-Upload** für „Sign in to confirm you're not a bot“ und altersbeschränkte Videos
 - **Lesezeichen-Buttons** („Bookmarklets“): ein Klick auf einer Videoseite, und der Download startet
 - **SoundCloud-Modus:** Tracks, Sets und ganze Profile; Suche direkt in ScobeTube; Ton im Originalformat ohne Qualitätsverlust
+- **Spotify:** Songs, Alben, Playlists und Künstler (Top-Songs). Spotify-Audio ist DRM-geschützt und wird nicht von Spotify geladen. ScobeTube liest nur Titel, Interpret, Album und Cover, sucht denselben Song auf YouTube Music (Abgleich über Länge und Titel) und schreibt die Spotify-Infos samt Cover in die Datei. Wie bei spotDL kann der Abgleich in seltenen Fällen eine andere Version erwischen. Über den ↗-Knopf lässt sich das prüfen.
+- **Fortschritt im Browser-Tab:** Prozentanzeige im Titel und ein Tab-Icon, das sich beim Download füllt
+- **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
 - **Login mit Benutzerkonten und Rechten:** Der Admin legt Konten an und vergibt Rechte einzeln
 - Untertitel einbetten, läuft als PWA auf dem Handy
