@@ -105,7 +105,14 @@
         <div class="toggles">
           <label class="toggle"><input type="checkbox" id="optPlaylist"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span id="playlistLabel">Ganze Playlist</span></label>
           <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Cover &amp; Metadaten</label>
+          <label class="toggle"><input type="checkbox" id="optCut"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>✂ Zuschneiden</label>
           <label class="toggle video-only yt-only"><input type="checkbox" id="optSubs"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Untertitel</label>
+        </div>
+        <div class="cut-row" id="cutRow" hidden>
+          <label class="field"><span class="label">Start</span><input class="input mono" id="cutStart" placeholder="0:00" inputmode="numeric" autocomplete="off"></label>
+          <span class="cut-arrow">→</span>
+          <label class="field"><span class="label">Ende</span><input class="input mono" id="cutEnd" placeholder="Ende" inputmode="numeric" autocomplete="off"></label>
+          <p class="cut-hint">Format <b>1:20</b> oder <b>1:02:03</b>. Leer = Anfang bzw. Ende. Nur dieser Teil wird geladen. Videos werden auf ca. 1 Sek. genau geschnitten.</p>
         </div>
       </form>
     </section>
@@ -161,6 +168,7 @@
           <button data-filter="done">Fertig <span class="n" data-count="done">0</span></button>
           <button data-filter="failed">Fehler <span class="n" data-count="failed">0</span></button>
           <span class="sep"></span>
+          <button id="selectBtn" title="Mehrere Downloads auswählen und als ZIP laden" hidden>Auswählen</button>
           <button id="clearDone" title="Fertige Einträge aus der Liste entfernen (Dateien bleiben)" hidden>Aufräumen</button>
         </div>
       </div>
@@ -263,6 +271,66 @@
     <button class="btn danger small" data-del="file">Mit Datei löschen</button>
   </div>
 
+  <!-- Auswahl-Leiste -->
+  <div class="selbar" id="selbar" hidden>
+    <span class="sel-count"><b id="selCount">0</b> ausgewählt <span class="mono" id="selSize"></span></span>
+    <button class="btn ghost small" id="selAll">Alle fertigen</button>
+    <button class="btn accent small" id="selZip"><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>Als ZIP laden</button>
+    <button class="btn ghost small" id="selDone">Fertig</button>
+  </div>
+
+  <!-- Player -->
+  <div class="modal player" id="playerModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card player-card" role="dialog" aria-label="Player">
+      <div class="modal-head"><span class="label" id="plCounter"></span><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="pl-stage" id="plStage">
+        <div class="pl-audio" id="plAudioView">
+          <div class="pl-disc" id="plDisc"><div class="pl-label"><img id="plCover" alt="" referrerpolicy="no-referrer"></div></div>
+          <canvas id="plViz" width="600" height="160"></canvas>
+        </div>
+        <video id="plVideo" playsinline hidden></video>
+        <audio id="plAudio" hidden></audio>
+      </div>
+      <div class="pl-info"><h3 id="plTitle"></h3><p id="plArtist"></p></div>
+      <div class="pl-seek">
+        <span class="mono" id="plCur">0:00</span>
+        <input type="range" id="plSeek" min="0" max="1000" value="0" aria-label="Position">
+        <span class="mono" id="plDur">0:00</span>
+      </div>
+      <div class="pl-controls">
+        <button class="icon-btn" id="plPrev" aria-label="Vorheriger"><svg viewBox="0 0 24 24"><path d="M6 5v14M19 5 9 12l10 7z"/></svg></button>
+        <button class="pl-play" id="plPlay" aria-label="Abspielen/Pause"><svg viewBox="0 0 24 24" id="plPlayIcon"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+        <button class="icon-btn" id="plNext" aria-label="Nächster"><svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
+        <label class="pl-vol"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16.5 8.5a5 5 0 0 1 0 7"/></svg><input type="range" id="plVol" min="0" max="100" value="90" aria-label="Lautstärke"></label>
+        <button class="icon-btn" id="plFull" aria-label="Vollbild" hidden><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tags bearbeiten -->
+  <div class="modal" id="tagModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="tagTitleH">
+      <div class="modal-head"><h2 id="tagTitleH">Tags bearbeiten</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <form class="tag-form" id="tagForm">
+        <label class="cover-drop" id="coverDrop" title="Klicken oder Bild hierher ziehen">
+          <img id="coverPreview" alt="" referrerpolicy="no-referrer">
+          <span class="cover-hint"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>Cover ändern<br><small>Klicken oder Bild reinziehen</small></span>
+          <input type="file" id="coverFile" accept="image/*" hidden>
+        </label>
+        <div class="form">
+          <label class="field"><span class="label">Titel</span><input class="input" id="tagTitle" maxlength="300" required></label>
+          <label class="field"><span class="label">Interpret</span><input class="input" id="tagArtist" maxlength="300"></label>
+          <label class="field"><span class="label">Album</span><input class="input" id="tagAlbum" maxlength="300"></label>
+          <label class="toggle"><input type="checkbox" id="tagRename" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Datei passend umbenennen („Interpret - Titel“)</label>
+          <div class="form-msg" id="tagMsg"></div>
+          <div><button class="btn accent" type="submit">Speichern</button></div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="toasts" id="toasts"></div>
 
   <template id="itemTpl">
@@ -277,7 +345,7 @@
         <span class="dur"></span>
       </div>
       <div class="body">
-        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
+        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
         <h3 class="title"></h3>
         <div class="sub"></div>
         <div class="cells"></div>
@@ -285,6 +353,8 @@
         <div class="err"></div>
       </div>
       <div class="actions">
+        <button class="act play" title="Abspielen"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></button>
+        <button class="act edit" title="Titel, Interpret &amp; Cover bearbeiten"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
         <a class="act open" title="Originalseite öffnen" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg></a>
         <a class="act primary dl" title="Herunterladen" download><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg></a>
         <button class="act retry" title="Erneut versuchen"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
@@ -292,6 +362,7 @@
         <button class="act del" title="Entfernen"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg></button>
       </div>
       <div class="stamp">FERTIG</div>
+      <div class="sel-mark"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
     </article>
   </template>
 

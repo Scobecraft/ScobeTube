@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yt_dlp
-from yt_dlp.utils import DownloadCancelled
+from yt_dlp.utils import DownloadCancelled, download_range_func
 
 from . import config, spotify
 
@@ -38,6 +38,12 @@ class Options:
     playlist: bool = False
     subtitles: bool = False
     thumbnail: bool = True
+    start: float | None = None   # Zuschnitt in Sekunden
+    end: float | None = None
+
+    @property
+    def cut(self) -> bool:
+        return self.start is not None or self.end is not None
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> "Options":
@@ -58,7 +64,43 @@ class Options:
             playlist=bool(data.get("playlist", False)),
             subtitles=bool(data.get("subtitles", False)),
             thumbnail=bool(data.get("thumbnail", True)),
+            **_parse_cut(data.get("start"), data.get("end")),
         )
+
+
+def parse_time(value: Any) -> float | None:
+    """'1:20', '01:02:03', '95', '95.5' → Sekunden. Leer → None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        secs = float(value)
+    else:
+        text = str(value).strip().replace(",", ".")
+        if not text:
+            return None
+        if not re.fullmatch(r"\d{1,3}(:\d{1,2}){0,2}(\.\d+)?", text):
+            raise ValueError(f"Ungültige Zeit: {text} (Beispiel: 1:20 oder 1:02:03)")
+        secs = 0.0
+        for part in text.split(":"):
+            secs = secs * 60 + float(part)
+    if secs < 0 or secs > 24 * 3600:
+        raise ValueError("Zeit außerhalb des gültigen Bereichs")
+    return secs
+
+
+def _parse_cut(start: Any, end: Any) -> dict[str, float | None]:
+    s, e = parse_time(start), parse_time(end)
+    if s == 0:
+        s = None
+    if s is not None and e is not None and e <= s:
+        raise ValueError("Das Ende muss nach dem Start liegen")
+    return {"start": s, "end": e}
+
+
+def fmt_time(secs: float) -> str:
+    secs = int(round(secs))
+    h, m, s = secs // 3600, secs % 3600 // 60, secs % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
 @dataclass
@@ -274,7 +316,18 @@ class Manager:
 
         opts["postprocessors"] = pps
         opts["paths"] = {"home": str(target), "temp": str(self.tmp_dir / item.id)}
-        opts["outtmpl"] = {"default": config.OUTPUT_TEMPLATE}
+        template = config.OUTPUT_TEMPLATE
+        if o.cut:
+            # Ausschnitt bekommt eigenen Namen, damit er die volle Version nicht überschreibt
+            label = f"{fmt_time(o.start or 0)}-{fmt_time(o.end) if o.end is not None else 'Ende'}".replace(":", "-")
+            if template.endswith(".%(ext)s"):
+                template = template[: -len(".%(ext)s")] + f" (Ausschnitt {label}).%(ext)s"
+            else:
+                template += f" (Ausschnitt {label})"
+            opts["download_ranges"] = download_range_func(None, [(o.start or 0, o.end if o.end is not None else float("inf"))])
+            # Kein force_keyframes_at_cuts: bricht mit manchen ffmpeg-Versionen ab.
+            # Videos werden daher am nächsten Keyframe geschnitten (≈ ±1 s), Audio exakt.
+        opts["outtmpl"] = {"default": template}
         opts["noplaylist"] = True
         opts["progress_hooks"] = [lambda d: self._on_progress(item, d)]
         opts["postprocessor_hooks"] = [lambda d: self._on_postprocess(item, d)]

@@ -9,6 +9,7 @@ import random
 import re
 import shutil
 import subprocess
+import zipfile
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config
+from . import tags
 from .sysmon import sysmon
 from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, users
 from .downloader import (AUDIO_FORMATS, AUDIO_QUALITIES, SEARCH_PREFIX, VIDEO_FORMATS, VIDEO_QUALITIES, Item,
@@ -96,7 +98,7 @@ CSP = ("default-src 'self'; "
        "script-src 'self'; "
        "style-src 'self' https://fonts.googleapis.com; "
        "font-src 'self' https://fonts.gstatic.com; "
-       "img-src 'self' data: https:; "
+       "img-src 'self' data: blob: https:; "
        "connect-src 'self'; "
        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'")
 SECURITY_HEADERS = {
@@ -488,6 +490,174 @@ async def file(item_id: str, request: Request, inline: bool = False):
     disp = "inline" if inline else "attachment"
     headers = {"Content-Disposition": f"{disp}; filename*=UTF-8''{quote(path.name)}"}
     return FileResponse(path, headers=headers)
+
+
+MEDIA_TYPES = {".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".opus": "audio/ogg", ".ogg": "audio/ogg",
+               ".flac": "audio/flac", ".wav": "audio/wav", ".mp4": "video/mp4", ".webm": "video/webm",
+               ".mkv": "video/x-matroska", ".aac": "audio/aac"}
+
+
+def _editable_audio(request: Request, item_id: str) -> tuple[Item, Path]:
+    item = _item_for(_need(request, "download"), item_id)
+    if item.status != "done":
+        raise HTTPException(409, "Der Download ist noch nicht fertig")
+    path = manager.file_path(item)
+    if not path or not path.is_file():
+        raise HTTPException(404, "Datei nicht gefunden")
+    if item.options.kind != "audio" or not tags.supported(path):
+        raise HTTPException(400, "Tags lassen sich nur bei Audiodateien (MP3, M4A, FLAC, Opus, WAV) bearbeiten")
+    return item, path
+
+
+@api.get("/items/{item_id}/meta")
+async def get_meta(item_id: str, request: Request):
+    _, path = _editable_audio(request, item_id)
+    return await asyncio.to_thread(tags.read, path)
+
+
+@api.get("/items/{item_id}/cover")
+async def get_cover(item_id: str, request: Request):
+    item = _item_for(_user(request), item_id)
+    path = manager.file_path(item)
+    found = await asyncio.to_thread(tags.read_cover, path) if path and path.is_file() else None
+    if not found:
+        raise HTTPException(404, "Kein Cover vorhanden")
+    data, mime = found
+    if mime not in ("image/jpeg", "image/png"):
+        mime = "image/jpeg"
+    return Response(data, media_type=mime, headers={"Cache-Control": "private, max-age=86400"})
+
+
+def _clean_name(text: str) -> str:
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", text).strip(" .")
+    return text[:180] or "Unbenannt"
+
+
+@api.post("/items/{item_id}/meta")
+async def set_meta(item_id: str, request: Request):
+    item, path = _editable_audio(request, item_id)
+    form = await request.form()
+    field = lambda k: (str(form.get(k) or "").strip()[:300])  # noqa: E731
+    title, artist, album = field("title"), field("artist"), field("album")
+    rename = form.get("rename") in ("1", "true", "on")
+    cover = None
+    upload = form.get("cover")
+    if upload is not None and hasattr(upload, "read"):
+        raw = await upload.read(tags.MAX_COVER_BYTES + 1)
+        if raw:
+            try:
+                cover = await asyncio.to_thread(tags.normalize_cover, raw)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from e
+    try:
+        await asyncio.to_thread(tags.write, path, title, artist, album, cover)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Tags konnten nicht gespeichert werden: {e}") from e
+
+    if rename and title:
+        stem = _clean_name(f"{artist} - {title}" if artist else title)
+        target = path.with_name(stem + path.suffix)
+        n = 2
+        while target.exists() and target != path:
+            target = path.with_name(f"{stem} ({n}){path.suffix}")
+            n += 1
+        if target != path:
+            path.rename(target)
+            item.filename = str(target.relative_to(config.DOWNLOAD_DIR))
+            path = target
+    if title:
+        item.title = f"{artist} - {title}" if artist else title
+    if artist:
+        item.uploader = artist
+    if cover:
+        item.thumbnail = f"api/items/{item.id}/cover?v={int(time.time())}"
+    item.filesize = path.stat().st_size
+    manager._update(item)
+    return item.public()
+
+
+@api.get("/play/{item_id}")
+async def play(item_id: str, request: Request):
+    """Datei zum Abspielen im Browser (mit Spulen über Range-Anfragen)."""
+    item = _item_for(_need(request, "files"), item_id)
+    path = manager.file_path(item)
+    if not path or not path.is_file():
+        raise HTTPException(404, "Datei nicht gefunden")
+    return FileResponse(path, media_type=MEDIA_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+                        headers={"Content-Disposition": "inline", "Cache-Control": "private, max-age=3600"})
+
+
+class _ZipBuffer:
+    """Nimmt die ZIP-Ausgabe auf, damit sie Stück für Stück gestreamt werden kann."""
+
+    def __init__(self) -> None:
+        self.chunks: list[bytes] = []
+        self.pos = 0
+
+    def write(self, b: bytes) -> int:
+        self.chunks.append(bytes(b))
+        self.pos += len(b)
+        return len(b)
+
+    def tell(self) -> int:
+        return self.pos
+
+    def flush(self) -> None:
+        pass
+
+    def take(self) -> bytes:
+        data = b"".join(self.chunks)
+        self.chunks.clear()
+        return data
+
+
+@api.get("/zip")
+async def zip_download(request: Request, ids: str):
+    user = _need(request, "files")
+    wanted = [i for i in ids.split(",") if i][:1000]
+    files: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    playlists = set()
+    for item_id in wanted:
+        item = manager.get(item_id)
+        if not item or not _visible(user)(item) or item.status != "done":
+            continue
+        path = manager.file_path(item)
+        if not path or not path.is_file():
+            continue
+        name = item.filename or path.name
+        base, dot, ext = name.rpartition(".")
+        n = 2
+        while name.lower() in seen:  # doppelte Namen vermeiden
+            name = f"{base} ({n}).{ext}" if dot else f"{name} ({n})"
+            n += 1
+        seen.add(name.lower())
+        files.append((path, name))
+        playlists.add(item.playlist)
+    if not files:
+        raise HTTPException(404, "Keine fertigen Dateien ausgewählt")
+
+    title = next(iter(playlists)) if len(playlists) == 1 and None not in playlists else \
+        "ScobeTube-" + time.strftime("%Y-%m-%d_%H-%M")
+    zipname = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title).strip(" .")[:120] + ".zip"
+
+    def generate():
+        buf = _ZipBuffer()
+        # ZIP_STORED: Medien sind schon komprimiert – so geht es schnell und schont die CPU
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+            for path, name in files:
+                info = zipfile.ZipInfo.from_file(path, arcname=name)
+                with path.open("rb") as src, zf.open(info, "w", force_zip64=True) as dst:
+                    while chunk := src.read(1024 * 1024):
+                        dst.write(chunk)
+                        if buf.pos and len(buf.chunks) > 4:
+                            yield buf.take()
+                yield buf.take()
+        yield buf.take()
+
+    log.info("%s lädt ZIP mit %d Dateien", user.username, len(files))
+    return StreamingResponse(generate(), media_type="application/zip",
+                             headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(zipname)}"})
 
 
 @api.get("/events")

@@ -21,6 +21,10 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Auto-Löschung:** Heruntergeladene Dateien werden nach 10 Stunden automatisch gelöscht (einstellbar). An jedem Download steht, wie lange er noch bleibt.
 - **Statistik pro Benutzer:** Downloads und Datenmenge insgesamt sowie der aktuell belegte Speicher, für Admins von allen Benutzern
 - **Live-Systemmonitor:** CPU, RAM und Speicher mit Verlauf der letzten 3 Minuten, dazu Load und der RAM-Verbrauch von ScobeTube (sichtbar für Admins und Benutzer mit dem Recht „Einstellungen“)
+- **Player:** Fertige Downloads direkt im Browser abspielen. Audio läuft mit drehender Platte und Live-Visualizer, Video im Player mit Vollbild. Vor/Zurück springt durch die Liste. Tasten: Leertaste = Play/Pause, ←/→ = 10 s spulen, N = nächster.
+- **Zuschneiden:** Nur einen Teil laden (z. B. 1:20–2:45). Audio wird exakt geschnitten, Video auf etwa eine Sekunde genau.
+- **ZIP-Download:** Über „Auswählen“ mehrere fertige Downloads markieren und als eine ZIP-Datei laden
+- **Tags bearbeiten (Audio):** Titel, Interpret, Album und Cover nachträglich ändern, auf Wunsch wird die Datei passend umbenannt (MP3, M4A, FLAC, Opus, WAV)
 - **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
 - **Login mit Benutzerkonten und Rechten:** Der Admin legt Konten an und vergibt Rechte einzeln
