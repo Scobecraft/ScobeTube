@@ -58,16 +58,14 @@
           </form>
           <p class="mt"><button type="button" class="linkish" id="useRecovery">Wiederherstellungscode verwenden</button> · <button type="button" class="linkish" id="backBtn">Zurück</button></p>
         </div>
-        <div class="login-legal">
-          <b>🔒 Private Instanz</b> – nur für Personen, die vom Betreiber eingeladen wurden. Kein öffentliches oder kommerzielles Angebot.
-          Mit der Anmeldung bestätigst du, nur Inhalte herunterzuladen, zu denen du berechtigt bist (z. B. eigene, freie oder als Privatkopie erlaubte Inhalte), sie nicht weiterzugeben und die
-          <a href="rechtliches#nutzung">Nutzungsbedingungen</a> sowie die <a href="rechtliches#datenschutz">Datenschutzhinweise</a> zu akzeptieren.
-          Es wird nur ein technisch notwendiges Cookie gesetzt.
+        <div class="login-legal" id="loginLegal">
+          <p><b>🔒 Private Instanz</b> – nur für eingeladene Personen. Mit der Anmeldung akzeptierst du die <a href="rechtliches#nutzung">Nutzungsbedingungen</a> und <a href="rechtliches#datenschutz">Datenschutzhinweise</a>.</p>
         </div>
         <div class="secure-note"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg><span>Passwörter werden nur als scrypt-Hash gespeichert.</span></div>
       </div>
     </section>
   </main>
+  <script src="static/md.js"></script>
   <script src="static/webauthn.js"></script>
   <script src="static/login.js"></script>
   <script src="static/eggs.js"></script>

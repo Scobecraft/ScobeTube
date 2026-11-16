@@ -902,7 +902,60 @@
       catch (err) { toast(err.message, "error"); }
       finally { pwBtn.classList.remove("busy"); }
     });
-    row.append(save, pwIn, pwBtn);
+    const gen = el("button", "btn ghost small", "🎲 Zufällig"); gen.type = "button"; gen.title = "Sicheres Zufallspasswort erzeugen";
+    gen.addEventListener("click", () => {
+      const abc = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const rnd = crypto.getRandomValues(new Uint32Array(14));
+      pwIn.value = Array.from(rnd, (n) => abc[n % abc.length]).join("");
+      pwIn.type = "text"; pwIn.select();
+    });
+    row.append(save);
+    const emergency = el("div", "emergency");
+    emergency.append(el("span", "label", "🚨 Notfall & Sicherheit"));
+    const pwRow = el("div", "row-acts"); pwRow.append(pwIn, gen, pwBtn);
+    emergency.append(el("p", "em-hint", "Passwort vergessen? Neues setzen und der Person sicher mitteilen. Alle Sitzungen werden beendet."), pwRow);
+    const sec = el("div", "em-2fa");
+    const callSec = async (body, msg) => {
+      try {
+        await api(`users/${encodeURIComponent(u.username)}/security`, { method: "POST", body });
+        toast(msg, "success"); loadUsers();
+      } catch (err) { toast(err.message, "error"); }
+    };
+    const confirmBtn = (label, onGo) => {
+      const b = el("button", "btn ghost small", label); b.type = "button";
+      b.addEventListener("click", () => {
+        if (!b.classList.contains("confirm")) { b.classList.add("confirm"); const old = b.textContent; b.textContent = "Sicher?"; setTimeout(() => { b.classList.remove("confirm"); b.textContent = old; }, 3500); return; }
+        onGo();
+      });
+      return b;
+    };
+    if (u.twofa) {
+      const st = el("p", "em-hint", `Zwei-Faktor-Login: ${u.totp ? "Authenticator-App" : ""}${u.totp && u.passkeys ? " + " : ""}${u.passkeys ? u.passkeys + " Passkey" + (u.passkeys > 1 ? "s" : "") : ""} · ${u.recovery_left} Wiederherstellungscodes übrig`);
+      sec.append(st);
+      const acts = el("div", "row-acts");
+      if (u.totp) acts.append(confirmBtn("App-2FA entfernen", () => callSec({ action: "totp" }, `Authenticator-App von ${u.username} entfernt`)));
+      if (u.passkeys > 1) acts.append(confirmBtn("Alle Passkeys löschen", () => callSec({ action: "passkeys" }, `Alle Passkeys von ${u.username} gelöscht`)));
+      if (u.recovery_left) acts.append(confirmBtn("Wiederherstellungscodes löschen", () => callSec({ action: "recovery" }, "Wiederherstellungscodes gelöscht")));
+      acts.append(confirmBtn("⚠ Komplett zurücksetzen", async () => {
+        try { await api(`users/${encodeURIComponent(u.username)}/reset-2fa`, { method: "POST" }); toast(`Zwei-Faktor-Login von ${u.username} komplett entfernt`, "success"); loadUsers(); }
+        catch (err) { toast(err.message, "error"); }
+      }));
+      sec.append(acts);
+      if ((u.passkey_list || []).length) {
+        const list = el("div", "pk-list");
+        u.passkey_list.forEach((pk) => {
+          const r = el("div", "pk");
+          const info = el("div"); info.style.flex = "1"; info.style.minWidth = "0";
+          info.append(el("b", "", "🔑 " + pk.name), el("small", "", ` · angelegt ${fmtDate(pk.created)} · zuletzt ${fmtDate(pk.last_used)}`));
+          r.append(info, confirmBtn("Löschen", () => callSec({ action: "passkey", id: pk.id }, `Passkey „${pk.name}“ gelöscht`)));
+          list.append(r);
+        });
+        sec.append(list);
+      }
+    } else {
+      sec.append(el("p", "em-hint", "Kein Zwei-Faktor-Login eingerichtet."));
+    }
+    emergency.append(sec);
     if (!me) {
       const lock = el("button", "btn ghost small", u.disabled ? "Entsperren" : "Sperren"); lock.type = "button";
       lock.addEventListener("click", async () => {
@@ -916,18 +969,10 @@
         catch (err) { toast(err.message, "error"); }
       });
       row.append(lock, del);
-      if (u.twofa) {
-        const r2 = el("button", "btn ghost small", "2FA zurücksetzen"); r2.type = "button";
-        r2.title = "Falls das Handy oder der Passkey verloren ging: App, Passkeys und Codes entfernen";
-        r2.addEventListener("click", async () => {
-          if (!r2.classList.contains("confirm")) { r2.classList.add("confirm"); r2.textContent = "Wirklich zurücksetzen?"; setTimeout(() => { r2.classList.remove("confirm"); r2.textContent = "2FA zurücksetzen"; }, 4000); return; }
-          try { await api(`users/${encodeURIComponent(u.username)}/reset-2fa`, { method: "POST" }); toast(`Zwei-Faktor-Login von ${u.username} entfernt`, "success"); loadUsers(); }
-          catch (err) { toast(err.message, "error"); }
-        });
-        row.append(r2);
-      }
+
     }
     panel.appendChild(row);
+    panel.appendChild(emergency);
     card.append(top, stats, panel);
     return card;
   }

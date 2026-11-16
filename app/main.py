@@ -31,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import config
 from . import imgproxy, tags
+from .legal import legal
 from .sysmon import sysmon
 from . import auth
 from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, tickets, users
@@ -99,8 +100,8 @@ api = APIRouter(prefix="/api")
 
 # ------------------------------------------------------- sicherheit
 PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
-                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/robots.txt", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
-PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js",
+                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
+PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js", "/static/md.js",
                  "/static/icon.svg"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -540,6 +541,44 @@ async def passkey_delete(request: Request):
     return _twofa_status(user)
 
 
+@api.post("/users/{username}/security")
+async def admin_user_security(username: str, request: Request):
+    """Notfall-Werkzeuge: App-2FA entfernen, einzelnen Passkey löschen, Wiederherstellungscodes löschen."""
+    admin = _need(request, "admin")
+    user = users.get(username)
+    if not user:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    data = await _json(request)
+    action = data.get("action")
+    with users.lock:
+        if action == "totp":
+            user.totp_secret, user.totp_last_step = None, 0
+            what = "Authenticator-App"
+        elif action == "passkey":
+            before = len(user.passkeys)
+            user.passkeys = [p for p in user.passkeys if p["id"] != data.get("id")]
+            if len(user.passkeys) == before:
+                raise HTTPException(404, "Passkey nicht gefunden")
+            what = "einen Passkey"
+        elif action == "passkeys":
+            user.passkeys = []
+            what = "alle Passkeys"
+        elif action == "recovery":
+            user.recovery_codes = []
+            what = "die Wiederherstellungscodes"
+        else:
+            raise HTTPException(400, "Unbekannte Aktion")
+        if not user.twofa:
+            user.recovery_codes = []
+        if user.username.lower() != admin.username.lower():
+            users.revoke_user_sessions(user.username, save=False)   # Sicherheits-Eingriff → überall abmelden
+        users.save()
+    log.warning("%s hat bei „%s“ %s entfernt", admin.username, user.username, what)
+    return {**user.public(), "passkey_list": [{"id": p["id"], "name": p.get("name") or "Passkey",
+                                               "created": p.get("created"), "last_used": p.get("last_used")}
+                                              for p in user.passkeys]}
+
+
 @api.post("/users/{username}/reset-2fa")
 async def reset_user_2fa(username: str, request: Request):
     admin = _need(request, "admin")
@@ -595,7 +634,10 @@ async def change_password(request: Request):
 async def list_users(request: Request):
     _need(request, "admin")
     usage = manager.usage()
-    rows = [{**u.public(), "usage": usage.get(u.username.lower(), _EMPTY_USAGE)} for u in users.list()]
+    rows = [{**u.public(), "usage": usage.get(u.username.lower(), _EMPTY_USAGE),
+             "passkey_list": [{"id": p["id"], "name": p.get("name") or "Passkey", "created": p.get("created"),
+                               "last_used": p.get("last_used")} for p in u.passkeys]}
+            for u in users.list()]
     known = {u.username.lower() for u in users.list()}
     # Downloads gelöschter Konten trotzdem mitzählen
     deleted = {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0}
@@ -1128,9 +1170,36 @@ async def legal_page():
 
 
 @app.get("/api/legal")
-async def legal_info():
-    return {"operator_name": config.OPERATOR_NAME, "operator_contact": config.OPERATOR_CONTACT,
-            "retention_hours": config.RETENTION_HOURS, "updated": "November 2026"}
+async def legal_info(request: Request):
+    user = request.state.user
+    data = legal.get()
+    can_edit = bool(user and user.is_admin)
+    if not can_edit:  # Standardtexte und Bearbeiter nur für Admins
+        for sec in data["sections"]:
+            sec.pop("default_text", None)
+            sec.pop("default_title", None)
+        data.pop("updated_by", None)
+    return {**data, "retention_hours": config.RETENTION_HOURS, "can_edit": can_edit}
+
+
+@app.put("/api/legal")
+async def legal_update(request: Request):
+    admin = _need(request, "admin")
+    data = await _json(request)
+    try:
+        legal.save(data.get("sections") or {}, data.get("operator_name"), data.get("operator_contact"), admin.username)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    log.info("%s hat die Rechtstexte geändert", admin.username)
+    return await legal_info(request)
+
+
+@app.post("/api/legal/reset")
+async def legal_reset(request: Request):
+    admin = _need(request, "admin")
+    legal.reset()
+    log.info("%s hat die Rechtstexte auf den Standard zurückgesetzt", admin.username)
+    return await legal_info(request)
 
 
 @app.get("/robots.txt")

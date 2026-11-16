@@ -143,6 +143,12 @@
   }
   $("#pkLogin").addEventListener("click", passkeyLogin);
 
+  // Hinweistext (vom Admin bearbeitbar) laden
+  fetch("api/legal", { credentials: "same-origin" }).then((r) => r.json()).then((d) => {
+    const sec = (d.sections || []).find((x) => x.key === "login");
+    if (sec && window.ScobeMD) $("#loginLegal").replaceChildren(window.ScobeMD.render(sec.text));
+  }).catch(() => { /* Standardtext bleibt */ });
+
   fetch("api/auth/status", { credentials: "same-origin" }).then((r) => r.json()).then((s) => {
     if (s.user) { location.replace(nextTarget()); return; }
     if (s.setup) {

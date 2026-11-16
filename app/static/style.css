@@ -932,3 +932,46 @@ body.egg-dance .mega .ch { animation: eggBounce .3s ease-in-out infinite alterna
 .legal-sec li::marker { color: var(--accent); font-weight: 700; }
 .legal-small { font-size: 12.5px !important; color: var(--paper-3) !important; }
 .center { text-align: center; }
+
+/* ---------- Rechtstexte bearbeiten ---------- */
+.legal .top-right { display: flex; gap: 10px; align-items: center; }
+.md p, .md li { color: var(--paper-2); font-size: 15px; line-height: 1.6; }
+.md p { margin: 0 0 12px; }
+.md h3 { margin: 20px 0 6px; font-size: 16px; color: var(--paper); }
+.md b { color: var(--paper); }
+.md ol, .md ul { padding-left: 22px; margin: 8px 0 12px; }
+.md li { margin-bottom: 8px; }
+.md li::marker { color: var(--accent); font-weight: 700; }
+.md a, .login-legal a { color: var(--paper-2); text-decoration: underline; text-underline-offset: 3px; }
+.md a:hover { color: var(--accent); }
+.login-legal p { margin: 0 0 6px; color: var(--paper-3); font-size: 12.5px; line-height: 1.55; }
+.login-legal p:last-child { margin: 0; }
+.legal-help { padding: 18px 22px; margin-bottom: 26px; border-color: var(--accent); animation: fadeUp .45s var(--ease); }
+.legal-help h3 { margin: 0 0 6px; font: 800 17px var(--display); text-transform: uppercase; }
+.legal-help p { margin: 0 0 10px; color: var(--paper-2); font-size: 14px; }
+.cheat { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; font-size: 12.5px; }
+.cheat span { padding: 6px 9px; border: 1.5px solid var(--line-soft); background: var(--bg); }
+.legal-editing .legal { max-width: 1200px; }
+.legal-sec.editing { border-style: dashed; }
+.ed-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.ed-title { flex: 1 1 260px; font: 800 18px var(--display) !important; text-transform: uppercase; }
+.ed-op { margin-bottom: 14px; }
+.ed-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.ed-grid > div { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.ed-text { resize: vertical; min-height: 180px; font-size: 13.5px !important; line-height: 1.55; }
+.ed-preview { flex: 1; padding: 14px 16px; border: 2px solid var(--line-soft); background: var(--bg); overflow: auto; max-height: 640px; }
+.savebar {
+  position: fixed; left: 50%; bottom: 20px; z-index: 55; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+  padding: 12px 16px; background: var(--card); border: 2px solid var(--paper); box-shadow: 7px 7px 0 var(--accent); animation: barIn .45s var(--spring); max-width: calc(100% - 24px);
+}
+.savebar .mono { font-size: 12.5px; color: var(--paper-3); margin-right: 6px; }
+.savebar.dirty .mono { color: var(--sc); }
+.legal-editing .legal { padding-bottom: 120px; }
+@media (max-width: 860px) { .ed-grid { grid-template-columns: 1fr; } }
+
+/* Notfall-Bereich in der Benutzerverwaltung */
+.emergency { margin-top: 18px; padding: 14px; border: 2px dashed rgba(255,75,75,.55); background: rgba(255,75,75,.04); }
+.emergency > .label { color: #ff9b9b; }
+.em-hint { margin: 8px 0 0; font-size: 13px; color: var(--paper-2); }
+.em-2fa { margin-top: 14px; padding-top: 12px; border-top: 1.5px dashed var(--line-soft); }
+.emergency .row-acts { margin-top: 10px; }

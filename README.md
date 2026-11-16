@@ -30,7 +30,8 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **📌 Behalten:** Einzelne Downloads von der Auto-Löschung ausnehmen (eigenes Recht „Downloads dauerhaft behalten“)
 - **Zwei-Faktor-Login:** Authenticator-App (TOTP) und/oder Passkeys (Google-Passwortmanager, Android, iPhone, Windows Hello, Sicherheitsschlüssel) sowie Wiederherstellungscodes
 - **Datenschutzfreundlich:** Schriften lokal, Vorschaubilder über den Server. Der Browser kontaktiert keine fremden Server, es gibt kein Tracking und nur ein technisch notwendiges Cookie.
-- **Rechtliches:** Seite mit Hinweis auf private Nutzung, Nutzungsbedingungen und Datenschutzhinweisen (`/rechtliches`); die Instanz ist für Suchmaschinen gesperrt
+- **Rechtliches:** Seite mit Hinweis auf private Nutzung, Nutzungsbedingungen und Datenschutzhinweisen (`/rechtliches`); die Instanz ist für Suchmaschinen gesperrt. Als Admin bearbeitest du alle Texte, den Hinweis auf der Anmeldeseite und die Betreiberangaben direkt auf der Seite (✎ Bearbeiten, mit Live-Vorschau).
+- **Notfall-Werkzeuge für Admins:** Passwort neu setzen (auch als Zufallspasswort), Authenticator-App entfernen, einzelne oder alle Passkeys löschen, Wiederherstellungscodes löschen oder den Zwei-Faktor-Login komplett zurücksetzen. Der Benutzer wird dabei überall abgemeldet.
 - Ein paar versteckte Easter Eggs 🥚
 - **↗-Knopf** bei jedem Download, der die Originalseite öffnet (YouTube-Video, SoundCloud-Track, Spotify-Song …)
 - **Suche:** Statt eines Links einfach einen Suchbegriff eingeben (YouTube oder SoundCloud)
