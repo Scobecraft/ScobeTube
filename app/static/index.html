@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ScobeTube</title>
+  <meta name="theme-color" content="#07060d">
+  <link rel="icon" href="static/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <div class="bg" aria-hidden="true">
+    <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+    <div class="grid"></div>
+  </div>
+  <canvas id="confetti" aria-hidden="true"></canvas>
+
+  <div class="app">
+    <header class="top">
+      <a class="brand" href="./">
+        <span class="logo">
+          <svg viewBox="0 0 24 24"><path d="M9 6.5v8.6l7-4.3z" fill="currentColor"/><path d="M7 18.5h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </span>
+        <span class="brand-text">Scobe<span class="grad">Tube</span></span>
+      </a>
+      <div class="top-right">
+        <div class="pill live" id="conn" title="Verbindung zum Server">
+          <span class="dot"></span><span class="conn-text">Verbinde…</span>
+        </div>
+        <button class="icon-btn" id="settingsBtn" aria-label="Einstellungen" title="Einstellungen">
+          <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="hero">
+      <h1 class="headline reveal">Alles herunterladen.<br><span class="grad shine">Einfach so.</span></h1>
+      <p class="sub reveal" style="--d:.08s">YouTube, Playlists und über 1.000 weitere Seiten – als Video oder Musik, direkt auf deinen Server.</p>
+
+      <form class="composer glass reveal" id="addForm" style="--d:.16s" autocomplete="off">
+        <div class="input-row">
+          <div class="input-wrap">
+            <svg class="input-icon" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <textarea id="url" rows="1" placeholder="Link einfügen – oder mehrere, einer pro Zeile" spellcheck="false"></textarea>
+            <button type="button" class="paste-btn" id="pasteBtn" title="Aus Zwischenablage einfügen">Einfügen</button>
+          </div>
+          <button type="submit" class="go-btn" id="goBtn">
+            <span class="go-label">Laden</span>
+            <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
+          </button>
+        </div>
+
+        <div class="controls">
+          <div class="segmented" id="kindSeg" role="tablist">
+            <span class="seg-indicator"></span>
+            <button type="button" data-kind="video" class="active">
+              <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="14" height="14" rx="3"/><path d="m16.5 10 5-3v10l-5-3"/></svg>Video
+            </button>
+            <button type="button" data-kind="audio">
+              <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Audio
+            </button>
+          </div>
+
+          <div class="field">
+            <label>Format</label>
+            <div class="chips" id="formatChips"></div>
+          </div>
+          <div class="field">
+            <label>Qualität</label>
+            <div class="chips" id="qualityChips"></div>
+          </div>
+        </div>
+
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="optPlaylist" checked><span class="track"><span class="knob"></span></span>Ganze Playlist</label>
+          <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="track"><span class="knob"></span></span>Cover &amp; Metadaten</label>
+          <label class="toggle video-only"><input type="checkbox" id="optSubs"><span class="track"><span class="knob"></span></span>Untertitel</label>
+        </div>
+      </form>
+    </section>
+
+    <section class="list-section">
+      <div class="list-head">
+        <div class="tabs" id="tabs">
+          <span class="tab-indicator"></span>
+          <button data-filter="all" class="active">Alle <span class="count" data-count="all">0</span></button>
+          <button data-filter="active">Aktiv <span class="count" data-count="active">0</span></button>
+          <button data-filter="done">Fertig <span class="count" data-count="done">0</span></button>
+          <button data-filter="failed">Fehler <span class="count" data-count="failed">0</span></button>
+        </div>
+        <div class="list-actions">
+          <button class="ghost-btn" id="clearDone" title="Fertige Einträge aus der Liste entfernen (Dateien bleiben)">
+            <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg>Liste aufräumen
+          </button>
+        </div>
+      </div>
+
+      <div class="list" id="list"></div>
+
+      <div class="empty" id="empty">
+        <div class="empty-art">
+          <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
+          </div>
+        </div>
+        <h3>Noch nichts hier</h3>
+        <p>Füge oben einen Link ein oder zieh ihn einfach auf die Seite.</p>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span>ScobeTube <span id="appVersion"></span></span>
+      <span class="sep">•</span>
+      <span>yt-dlp <span id="ytdlpVersion">…</span></span>
+    </footer>
+  </div>
+
+  <!-- Drag & Drop Overlay -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="drop-box">
+      <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
+      <span>Link hier ablegen</span>
+    </div>
+  </div>
+
+  <!-- Einstellungen -->
+  <div class="modal" id="settings" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card glass" role="dialog" aria-labelledby="settingsTitle">
+      <div class="modal-head">
+        <h2 id="settingsTitle">Einstellungen</h2>
+        <button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <h4>yt-dlp aktualisieren</h4>
+          <p>Wenn YouTube etwas ändert, hilft meist ein Update. Installiert: <b id="ytdlpVersion2">…</b></p>
+        </div>
+        <button class="btn" id="updateBtn"><span>Aktualisieren</span></button>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <h4>Cookies <span class="badge" id="cookieBadge">keine</span></h4>
+          <p>Bei „Sign in to confirm you're not a bot“ oder altersbeschränkten Videos: <code>cookies.txt</code> aus dem Browser exportieren und hier hochladen.</p>
+        </div>
+        <div class="setting-actions">
+          <label class="btn"><input type="file" id="cookieFile" accept=".txt,text/plain" hidden><span>Hochladen</span></label>
+          <button class="btn subtle" id="cookieDelete" hidden>Entfernen</button>
+        </div>
+      </div>
+
+      <div class="setting">
+        <div class="setting-text">
+          <h4>Lesezeichen</h4>
+          <p>Zieh diesen Button in deine Lesezeichenleiste – ein Klick auf einer Videoseite schickt sie an ScobeTube.</p>
+        </div>
+        <div class="setting-actions">
+          <a class="btn" id="bmVideo" href="#">▶ Video</a>
+          <a class="btn" id="bmAudio" href="#">♫ MP3</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Löschen-Popover -->
+  <div class="popover glass" id="delPop" hidden>
+    <p>Eintrag entfernen?</p>
+    <button class="btn subtle" data-del="entry">Nur aus Liste</button>
+    <button class="btn danger" data-del="file">Mit Datei löschen</button>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <template id="itemTpl">
+    <article class="item">
+      <div class="thumb">
+        <img alt="" loading="lazy" referrerpolicy="no-referrer">
+        <div class="thumb-fallback"><svg viewBox="0 0 24 24"><path d="M9 6.5v11l9-5.5z"/></svg></div>
+        <span class="duration"></span>
+        <div class="done-check"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
+      </div>
+      <div class="body">
+        <div class="meta-top">
+          <span class="status"><span class="status-dot"></span><span class="status-text"></span></span>
+          <span class="fmt"></span>
+          <span class="playlist-chip"></span>
+        </div>
+        <h3 class="title"></h3>
+        <div class="sub-line"><span class="uploader"></span></div>
+        <div class="progress"><div class="bar"></div></div>
+        <div class="stats"></div>
+        <div class="error-msg"></div>
+      </div>
+      <div class="actions">
+        <a class="act primary dl" title="Herunterladen" download>
+          <svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>
+        </a>
+        <button class="act retry" title="Erneut versuchen"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg></button>
+        <button class="act cancel" title="Abbrechen"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+        <button class="act del" title="Entfernen"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14"/></svg></button>
+      </div>
+    </article>
+  </template>
+
+  <script src="static/app.js"></script>
+</body>
+</html>

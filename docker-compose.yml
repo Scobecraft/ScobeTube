@@ -1,0 +1,20 @@
+services:
+  scobetube:
+    build: .
+    # oder fertiges Image, sobald veröffentlicht:
+    # image: ghcr.io/scobecraft/scobetube:latest
+    container_name: scobetube
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./downloads:/downloads   # hier landen die Dateien
+      - ./data:/data             # Warteschlange, Cookies, Cache
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - MAX_CONCURRENT_DOWNLOADS=3
+      # - AUTH_USER=admin
+      # - AUTH_PASSWORD=geheim
+      # - YTDLP_CHANNEL=nightly
