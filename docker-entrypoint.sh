@@ -24,6 +24,8 @@ if [ "${YTDLP_AUTO_UPDATE:-true}" = "true" ]; then
   echo "[scobetube] Prüfe auf yt-dlp-Updates (${YTDLP_CHANNEL:-stable}) …"
   PRE=""
   [ "${YTDLP_CHANNEL:-stable}" = "nightly" ] && PRE="--pre"
+  # Kanal, den die Selbstheilung oder ein Admin in der Oberfläche gewählt hat
+  if grep -q '"channel": "nightly"' "$STATE_DIR/healer.json" 2>/dev/null; then PRE="--pre"; fi
   $RUN_AS pip install -q -U --no-cache-dir $PRE "yt-dlp[default]" \
     || echo "[scobetube] yt-dlp-Update fehlgeschlagen – nutze installierte Version"
 fi

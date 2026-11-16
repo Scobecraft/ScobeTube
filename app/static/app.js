@@ -45,6 +45,8 @@
     info: null, clockOffset: 0,
   };
   const can = (p) => !!state.me && state.me.effective.includes(p);
+  const isOwn = (it) => !!state.me && ((it.owner || "").toLowerCase() === state.me.username.toLowerCase() || can("view_all"));
+  const isHttps = () => location.protocol === "https:";
 
   // ------------------------------------------------------------ helpers
   const fmtBytes = (b) => {
@@ -379,6 +381,7 @@
     $(".retry", node).addEventListener("click", () => api(`items/${it.id}/retry`, { method: "POST" }).then(() => toast("Neuer Versuch läuft")).catch((e) => toast(e.message, "error")));
     $(".play", node).addEventListener("click", () => player.open(it.id));
     $(".edit", node).addEventListener("click", () => openTagEditor(it.id));
+    $(".share", node).addEventListener("click", () => openShareUsers(it.id));
     $(".pin", node).addEventListener("click", async (e) => {
       const cur = state.items.get(it.id); if (!cur) return;
       try {
@@ -397,6 +400,10 @@
     });
     $(".del", node).addEventListener("click", (e) => {
       const cur = state.items.get(it.id);
+      if (cur && !isOwn(cur)) {
+        api(`items/${it.id}`, { method: "DELETE" }).then(() => toast("Aus deiner Liste entfernt")).catch((err) => toast(err.message, "error"));
+        return;
+      }
       if (cur && cur.status === "done" && cur.filename) openDelPopover(e.currentTarget, it.id);
       else api(`items/${it.id}`, { method: "DELETE" }).catch((err) => toast(err.message, "error"));
     });
@@ -412,6 +419,12 @@
     node.dataset.canFiles = can("files") ? "1" : "0";
     node.dataset.canEdit = can("download") ? "1" : "0";
     node.dataset.canKeep = can("keep") ? "1" : "0";
+    node.dataset.canShare = can("share") ? "1" : "0";
+    const own = isOwn(it);
+    node.dataset.own = own ? "1" : "0";
+    const sw = it.shared_with || [];
+    $(".tag.shared", node).textContent = !own ? `👥 von ${it.owner || "?"}` : sw.length ? `👥 ${sw.length === 1 ? sw[0] : sw.length + " Personen"}` : "";
+    $(".del", node).title = own ? "Entfernen" : "Aus meiner Liste entfernen";
     node.classList.toggle("kept", !!it.keep);
     const pin = $(".pin", node); pin.classList.toggle("on", !!it.keep);
     pin.title = it.keep ? "Nicht mehr behalten (wieder automatisch löschen)" : "Behalten – wird nicht automatisch gelöscht";
@@ -675,8 +688,13 @@
       schedule();
     });
     es.addEventListener("added", (e) => upsert(JSON.parse(e.data)));
+    let ready = false;
+    es.addEventListener("init", () => { setTimeout(() => { ready = true; }, 500); });
     es.addEventListener("update", (e) => {
       const it = JSON.parse(e.data), prev = state.items.get(it.id);
+      if (!prev && ready && !isOwn(it) && it.status === "done") {
+        toast(`👥 ${it.owner} hat „${it.title}“ mit dir geteilt`, "success", 5000);
+      }
       upsert(it);
       if (prev && prev.status !== it.status) {
         if (it.status === "done") toast(`Fertig: ${it.title}`, "success");
@@ -704,7 +722,7 @@
   });
 
   // Einstellungen
-  $("#settingsBtn").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); });
+  $("#settingsBtn").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); loadHealer(); });
   $("#footStorage").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); });
 
   async function loadInfo() {
@@ -763,6 +781,34 @@
     } catch (err) { toast(err.message, "error"); }
     finally { btn.classList.remove("busy"); label.textContent = "Alle Downloads löschen"; loadStorage(); }
   });
+  // Selbstheilung: Status, Kanal, Meldungen
+  function renderHealer(h) {
+    $("#healPill").textContent = h.auto ? "aktiv" : "aus"; $("#healPill").classList.toggle("on", h.auto);
+    $$("#channelChips .chip").forEach((c) => c.classList.toggle("active", c.dataset.ch === h.channel));
+    $("#lastCheck").textContent = h.last_check ? `Zuletzt geprüft: ${fmtDate(h.last_check)}` : "";
+    $("#healHistory").replaceChildren(...(h.history || []).slice(0, 6).map((x) => el("li", "", `${fmtDate(x.time)} – ${x.text}`)));
+    const icon = { info: "🩹", warn: "⚠️", error: "🚨" };
+    $("#notices").replaceChildren(...(h.notices || []).map((n) => {
+      const d = el("div", `notice ${n.level}`);
+      const p = el("p"); p.append(el("b", "", "Selbstheilung"), n.text + " ", el("small", "", fmtDate(n.time)));
+      const x = el("button", "icon-btn", "×"); x.title = "Ausblenden";
+      x.addEventListener("click", async () => { try { renderHealer(await api("healer/dismiss", { method: "POST", body: { id: n.id } })); } catch { /* egal */ } });
+      d.append(el("span", "ni", icon[n.level] || "🩹"), p, x);
+      return d;
+    }));
+  }
+  async function loadHealer() { if (!can("settings")) return; try { renderHealer(await api("healer")); } catch { /* egal */ } }
+  $("#channelChips").addEventListener("click", async (e) => {
+    const c = e.target.closest(".chip"); if (!c || c.classList.contains("active")) return;
+    c.classList.add("pop");
+    try {
+      const r = await api("healer/channel", { method: "POST", body: { channel: c.dataset.ch } });
+      renderHealer(r);
+      if (r.restarting) { toast(`yt-dlp ${r.version} (${c.dataset.ch}) installiert – Neustart…`, "success", 5000); setTimeout(() => location.reload(), 4000); }
+      else toast(`Kanal: ${c.dataset.ch}`, "success");
+    } catch (err) { toast(err.message, "error", 6000); }
+  });
+
   $("#updateBtn").addEventListener("click", async (e) => {
     const btn = e.currentTarget; btn.classList.add("busy"); $("span", btn).textContent = "Lädt…";
     try {
@@ -770,7 +816,7 @@
       if (r.restarting) { toast(`yt-dlp ${r.version} installiert – Neustart…`, "success", 5000); setTimeout(() => location.reload(), 4000); }
       else toast(`yt-dlp ist aktuell (${r.version})`);
     } catch (err) { toast(err.message, "error", 6000); }
-    finally { btn.classList.remove("busy"); $("span", btn).textContent = "Aktualisieren"; }
+    finally { btn.classList.remove("busy"); $("span", btn).textContent = "Jetzt prüfen"; loadHealer(); }
   });
   $("#cookieFile").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -1358,6 +1404,74 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
+  // ------------------------------------------- mit benutzern teilen
+  let shareId = null;
+  async function openShareUsers(id) {
+    const it = state.items.get(id); if (!it) return;
+    shareId = id;
+    $("#shareItemName").textContent = it.title;
+    $("#shareMsg").textContent = ""; $("#shareFilter").value = "";
+    $("#shareInsecure").hidden = isHttps();
+    $("#shareSave").disabled = !isHttps();
+    openModal("shareUsers");
+    try {
+      const { users } = await api("share-targets");
+      const sel = new Set((it.shared_with || []).map((n) => n.toLowerCase()));
+      $("#shareList").replaceChildren(...(users.length ? users.map((name) => {
+        const l = el("label", "perm"); l.dataset.name = name.toLowerCase();
+        const cb = el("input"); cb.type = "checkbox"; cb.value = name; cb.checked = sel.has(name.toLowerCase()); cb.disabled = !isHttps();
+        const box = el("span", "box-t"); box.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+        l.append(cb, box, el("span", "", name)); return l;
+      }) : [el("p", "em-hint", "Es gibt noch keine anderen Benutzer.")]));
+    } catch (err) { $("#shareMsg").textContent = err.message; }
+  }
+  $("#shareFilter").addEventListener("input", (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $$("#shareList .perm").forEach((l) => { l.hidden = q && !l.dataset.name.includes(q); });
+  });
+  $("#shareSave").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; btn.classList.add("busy");
+    const names = $$("#shareList input:checked").map((c) => c.value);
+    try {
+      const upd = await api(`items/${shareId}/share`, { method: "POST", body: { users: names } });
+      upsert(upd); closeModal($("#shareUsers"));
+      toast(names.length ? `Geteilt mit ${names.join(", ")}` : "Nicht mehr geteilt", "success");
+    } catch (err) { $("#shareMsg").textContent = err.message; }
+    finally { btn.classList.remove("busy"); }
+  });
+
+  // ---------------------------------------- vom handy geteilter link
+  function openShareSheet(url, title) {
+    const audioOnly = /open\.spotify\.com\/|soundcloud\.com\//i.test(url);
+    $("#sheetName").textContent = title || "Geteilter Link";
+    $("#sheetUrl").textContent = url;
+    $("#sheetVideo").hidden = audioOnly;
+    openModal("shareSheet");
+    const go = async (kind, btn) => {
+      btn.classList.add("busy");
+      try {
+        const res = await api("add", { method: "POST", body: { urls: url, kind, format: kind === "video" ? "mp4" : "mp3", quality: "best", thumbnail: true } });
+        closeModal($("#shareSheet"));
+        toast(res.added.length > 1 ? `${res.added.length} Links in der Queue` : "Ab in die Queue!", "success");
+        fx(innerWidth / 2, innerHeight / 2, 50);
+        urlEl.value = ""; autosize(); updateMode();
+      } catch (err) { toast(err.message, "error", 5000); }
+      finally { btn.classList.remove("busy"); }
+    };
+    $("#sheetVideo").onclick = (e) => go("video", e.currentTarget);
+    $("#sheetAudio").onclick = (e) => go("audio", e.currentTarget);
+    $("#sheetCustom").onclick = () => { closeModal($("#shareSheet")); urlEl.value = url; autosize(); updateMode(); urlEl.focus(); };
+  }
+
+  if ("serviceWorker" in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(() => { /* egal */ });
+  }
+
+  $("#copyTemplate").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("#shareTemplate").textContent); toast("Adresse kopiert", "success"); }
+    catch { toast("Kopieren nicht möglich – bitte abschreiben", "error"); }
+  });
+
   window.ScobeToast = toast;
   window.ScobeFx = fx;
 
@@ -1379,11 +1493,21 @@
     $("#secUpdate").hidden = !can("settings");
     $("#secCookies").hidden = !can("settings");
     $("#secBookmarks").hidden = !can("download");
+    $("#secPhone").hidden = !can("download");
+    $("#phoneInsecure").hidden = isHttps(); $("#phoneHelp").hidden = !isHttps(); $("#copyTemplate").hidden = !isHttps();
+    $("#shareTemplate").textContent = new URL("share?url=", location.href).href;
     $("#settingsBtn").hidden = !(can("storage") || can("settings") || can("download"));
     $("#footStorage").hidden = !can("storage");
 
     const qp = new URLSearchParams(location.search);
-    if (qp.get("url")) {
+    if (qp.get("share") === "1") {
+      const sharedUrl = qp.get("url"), sharedTitle = qp.get("title");
+      history.replaceState(null, "", location.pathname);
+      if (!isHttps()) setTimeout(() => toast("Teilen geht nur über die verschlüsselte HTTPS-Adresse", "error", 6000), 400);
+      else if (!sharedUrl) setTimeout(() => toast("Im geteilten Inhalt war kein Link", "error"), 400);
+      else if (!can("download")) setTimeout(() => toast("Dir fehlt das Recht „Downloads starten“", "error"), 400);
+      else setTimeout(() => openShareSheet(sharedUrl, sharedTitle), 300);
+    } else if (qp.get("url")) {
       urlEl.value = qp.get("url");
       if (qp.get("kind") === "audio" || qp.get("kind") === "video") { state.kind = qp.get("kind"); }
       const d = detectSource(urlEl.value); if (d) state.source = d;
@@ -1396,7 +1520,7 @@
     autosize(); updateMode();
     document.fonts && document.fonts.ready.then(moveKindSlider);
     connect(); loadInfo();
-    if (can("settings")) startSystem();
+    if (can("settings")) { startSystem(); loadHealer(); setInterval(loadHealer, 60000); }
     if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
   }
   boot();

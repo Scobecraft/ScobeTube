@@ -18,6 +18,9 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Spotify:** Songs, Alben, Playlists und Künstler (Top-Songs). Spotify-Audio ist DRM-geschützt und wird nicht von Spotify geladen. ScobeTube liest nur Titel, Interpret, Album und Cover, sucht denselben Song auf YouTube Music (Abgleich über Länge und Titel) und schreibt die Spotify-Infos samt Cover in die Datei. Wie bei spotDL kann der Abgleich in seltenen Fällen eine andere Version erwischen. Über den ↗-Knopf lässt sich das prüfen.
 - **Fortschritt im Browser-Tab:** Prozentanzeige im Titel und ein Tab-Icon, das sich beim Download füllt
 - **Uptime des Containers** in der Fußzeile, läuft live mit
+- **Selbstheilung:** yt-dlp wird täglich aktualisiert. Schlagen mehrere Downloads wegen einer Änderung bei YouTube & Co. fehl, aktualisiert ScobeTube sich selbst, weicht notfalls auf die Nightly-Version aus, versucht die Downloads erneut und meldet das dem Admin
+- **Teilen vom Handy** (über HTTPS): ScobeTube als App installieren und Links aus YouTube, Spotify & Co. über „Teilen“ schicken. Auf dem iPhone geht das per Kurzbefehl, gestartet wird mit einem Tipp auf „Video“ oder „Audio“.
+- **Mit Benutzern teilen** (über HTTPS, nur an Konten): Fertige Downloads gezielt für andere Benutzer freigeben. Es gibt keine öffentlichen Links, und Empfänger können nur ansehen und herunterladen.
 - **Auto-Löschung:** Heruntergeladene Dateien werden nach 10 Stunden automatisch gelöscht (einstellbar). An jedem Download steht, wie lange er noch bleibt.
 - **Statistik pro Benutzer:** Downloads und Datenmenge insgesamt sowie der aktuell belegte Speicher, für Admins von allen Benutzern
 - **Live-Systemmonitor:** CPU, RAM und Speicher mit Verlauf der letzten 3 Minuten, dazu Load und der RAM-Verbrauch von ScobeTube (sichtbar für Admins und Benutzer mit dem Recht „Einstellungen“)
@@ -131,6 +134,16 @@ Als Admin öffnest du oben rechts dein Profil und gehst auf **Benutzer & Rechte*
 **Downloads gehen plötzlich nicht mehr:** In den Einstellungen auf **yt-dlp aktualisieren** klicken oder den Container neu starten. Hilft das nicht, `YTDLP_CHANNEL=nightly` setzen.
 
 **Lesezeichen / iOS-Kurzbefehl:** `http://<server>:8081/?url=<link>&kind=audio` öffnet ScobeTube mit dem Link im Eingabefeld. Gestartet wird der Download per Klick, das schützt vor fremden Seiten, die heimlich Downloads auslösen wollen.
+
+## Cloudflare Tunnel
+
+ScobeTube funktioniert gut hinter einem Cloudflare Tunnel und bekommt damit HTTPS. Das ist die Voraussetzung für Passkeys, die Handy-App und das Teilen.
+
+1. In der `docker-compose.yml` `TRUSTED_PROXIES=*` setzen, damit die echte Besucher-IP (für den Schutz gegen Passwort-Raten) und HTTPS erkannt werden.
+2. Port 8081 **nicht** im Router freigeben. Der Zugang aus dem Internet läuft nur über den Tunnel.
+3. Optional als zusätzliche Schutzschicht: Cloudflare Access (Zero Trust) vor die Domain schalten.
+
+Hinweis: Cloudflares Bedingungen sehen das kostenlose Angebot nicht für das Ausliefern großer Mengen Videodaten vor. Für den privaten Gebrauch ist das in der Regel kein Problem, große Dateien lädt man im Heimnetz aber schneller direkt.
 
 ## Reverse Proxy
 

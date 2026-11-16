@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from . import imgproxy, tags
 from .legal import legal
+from .healer import healer
 from .sysmon import sysmon
 from . import auth
 from .auth import COOKIE_NAME, PERMISSIONS, User, limiter, tickets, users
@@ -83,6 +84,12 @@ async def lifespan(_: FastAPI):
     config.STATE_DIR.mkdir(parents=True, exist_ok=True)
     users.load()
     manager.start(asyncio.get_running_loop())
+    healer.load()
+    healer.restart = _restart
+    healer.active_count = manager.active_count
+    for item_id in healer.take_retry_ids():  # nach einer Reparatur: Fehlgeschlagenes neu versuchen
+        manager.retry(item_id)
+    heal_task = asyncio.create_task(healer.run())
     cleaner = asyncio.create_task(_cleanup_loop())
     monitor = asyncio.create_task(sysmon.run())
     log.info("ScobeTube %s gestartet – yt-dlp %s – Downloads: %s – Auto-Löschung: %s",
@@ -91,6 +98,7 @@ async def lifespan(_: FastAPI):
     yield
     cleaner.cancel()
     monitor.cancel()
+    heal_task.cancel()
     manager.save()
 
 
@@ -100,9 +108,10 @@ api = APIRouter(prefix="/api")
 
 # ------------------------------------------------------- sicherheit
 PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
-                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
+                "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/sw.js", "/share", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
 PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js", "/static/md.js",
-                 "/static/icon.svg"}
+                 "/static/icon.svg", "/static/icon-192.png", "/static/icon-512.png",
+                 "/static/icon-maskable-512.png"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 CSP = ("default-src 'self'; "
@@ -202,6 +211,15 @@ def _need(request: Request, perm: str) -> User:
 
 
 def _visible(user: User):
+    """Sichtbar: eigene Downloads, mit mir geteilte – oder alles mit „view_all“."""
+    if user.has("view_all"):
+        return lambda item: True
+    name = user.username.lower()
+    return lambda item: (item.owner or "").lower() == name or name in item.shared_with
+
+
+def _owned(user: User):
+    """Verändern/Löschen darf nur der Besitzer (oder wer alle Downloads verwalten darf)."""
     if user.has("view_all"):
         return lambda item: True
     name = user.username.lower()
@@ -213,6 +231,21 @@ def _item_for(user: User, item_id: str) -> Item:
     if not item or not _visible(user)(item):
         raise HTTPException(404, "Nicht gefunden")
     return item
+
+
+def _owned_item(user: User, item_id: str) -> Item:
+    item = _item_for(user, item_id)
+    if not _owned(user)(item):
+        raise HTTPException(403, "Das ist ein geteilter Download – ändern kann ihn nur, wer ihn geteilt hat")
+    return item
+
+
+def _is_https(request: Request) -> bool:
+    """Verschlüsselte Verbindung? (direkt, über vertrauten Proxy oder laut Browser-Origin)"""
+    if request.url.scheme == "https":
+        return True
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    return origin.startswith("https://")
 
 
 def _set_session_cookie(request: Request, response: Response, token: str, ttl: int | None) -> None:
@@ -717,7 +750,7 @@ async def info(request: Request):
     return {
         "version": config.APP_VERSION,
         "ytdlp": yt_dlp.version.__version__,
-        "ytdlp_channel": config.YTDLP_CHANNEL,
+        "ytdlp_channel": healer.channel,
         "cookies": config.COOKIES_FILE.is_file(),
         "max_concurrent": config.MAX_CONCURRENT,
         "retention_hours": config.RETENTION_HOURS,
@@ -788,7 +821,7 @@ async def search(request: Request, q: str, source: str = "soundcloud"):
 
 @api.post("/items/{item_id}/cancel")
 async def cancel(item_id: str, request: Request):
-    _item_for(_need(request, "download"), item_id)
+    _owned_item(_need(request, "download"), item_id)
     if not manager.cancel(item_id):
         raise HTTPException(409, "Download ist nicht aktiv")
     return {"ok": True}
@@ -796,7 +829,7 @@ async def cancel(item_id: str, request: Request):
 
 @api.post("/items/{item_id}/keep")
 async def keep(item_id: str, request: Request):
-    _item_for(_need(request, "keep"), item_id)
+    _owned_item(_need(request, "keep"), item_id)
     data = await _json(request)
     item = manager.set_keep(item_id, bool(data.get("keep")))
     return item.public() if item else {}
@@ -804,7 +837,7 @@ async def keep(item_id: str, request: Request):
 
 @api.post("/items/{item_id}/retry")
 async def retry(item_id: str, request: Request):
-    _item_for(_need(request, "download"), item_id)
+    _owned_item(_need(request, "download"), item_id)
     if not manager.retry(item_id):
         raise HTTPException(409, "Download läuft noch")
     return {"ok": True}
@@ -812,16 +845,52 @@ async def retry(item_id: str, request: Request):
 
 @api.delete("/items/{item_id}")
 async def delete(item_id: str, request: Request, delete_file: bool = False):
-    _item_for(_need(request, "delete"), item_id)
+    user = _user(request)
+    item = _item_for(user, item_id)
+    if not _owned(user)(item):
+        # Empfänger eines geteilten Downloads: nur aus der eigenen Liste ausblenden
+        manager.set_shared(item_id, [n for n in item.shared_with if n != user.username.lower()])
+        return {"ok": True, "unshared": True}
+    _need(request, "delete")
     manager.remove(item_id, delete_file)
     return {"ok": True}
+
+
+@api.post("/items/{item_id}/share")
+async def share(item_id: str, request: Request):
+    user = _need(request, "share")
+    item = _owned_item(user, item_id)
+    if not _is_https(request):
+        raise HTTPException(403, "Teilen ist nur über eine verschlüsselte HTTPS-Verbindung erlaubt")
+    if item.status != "done":
+        raise HTTPException(409, "Nur fertige Downloads können geteilt werden")
+    data = await _json(request)
+    owner = (item.owner or "").lower()
+    names = []
+    for raw in data.get("users") or []:
+        u = users.get(str(raw))
+        if not u or u.disabled:
+            raise HTTPException(400, f"Benutzer „{raw}“ gibt es nicht")
+        if u.username.lower() != owner:
+            names.append(u.username.lower())
+    item = manager.set_shared(item_id, names)
+    log.info("%s teilt „%s“ mit: %s", user.username, item.title, ", ".join(names) or "niemandem")
+    return item.public()
+
+
+@api.get("/share-targets")
+async def share_targets(request: Request):
+    """Benutzernamen, mit denen man teilen kann (nur aktive Konten, ohne sich selbst)."""
+    user = _need(request, "share")
+    me = user.username.lower()
+    return {"users": [u.username for u in users.list() if not u.disabled and u.username.lower() != me]}
 
 
 @api.post("/clear")
 async def clear(request: Request):
     user = _need(request, "delete")
     data = await _json(request)
-    n = manager.clear(str(data.get("which", "done")), bool(data.get("delete_files")), _visible(user))
+    n = manager.clear(str(data.get("which", "done")), bool(data.get("delete_files")), _owned(user))
     return {"removed": n}
 
 
@@ -842,7 +911,7 @@ MEDIA_TYPES = {".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".opus": "audio/ogg", 
 
 
 def _editable_audio(request: Request, item_id: str) -> tuple[Item, Path]:
-    item = _item_for(_need(request, "download"), item_id)
+    item = _owned_item(_need(request, "download"), item_id)
     if item.status != "done":
         raise HTTPException(409, "Der Download ist noch nicht fertig")
     path = manager.file_path(item)
@@ -1043,7 +1112,12 @@ async def events(request: Request):
                 if event is None:
                     yield ": ping\n\n"
                     continue
-                if user.has("view_all") or (data.get("owner") or "").lower() == user.username.lower():
+                me = user.username.lower()
+                if event == "revoked":  # Freigabe entzogen → nur bei diesem Benutzer entfernen
+                    if data.get("user") == me and not user.has("view_all"):
+                        yield _sse("removed", {"id": data["id"]})
+                    continue
+                if user.has("view_all") or (data.get("owner") or "").lower() == me or me in (data.get("shared_with") or []):
                     yield _sse(event, data)
         finally:
             manager.unsubscribe(q)
@@ -1124,29 +1198,52 @@ _updating = False
 async def update_ytdlp(request: Request):
     global _updating
     _need(request, "settings")
-    if _updating:
+    if _updating or healer.busy:
         raise HTTPException(409, "Update läuft bereits")
     if manager.active_count():
         raise HTTPException(409, "Bitte warten, bis laufende Downloads fertig sind")
     _updating = True
     try:
-        cmd = [sys.executable, "-m", "pip", "install", "-U", "--no-cache-dir", "--disable-pip-version-check"]
-        if config.YTDLP_CHANNEL == "nightly":
-            cmd.append("--pre")
-        cmd.append("yt-dlp[default]")
-        proc = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=300)
-        if proc.returncode != 0:
-            raise HTTPException(500, "Update fehlgeschlagen: " + (proc.stderr or proc.stdout)[-500:])
-        new = await asyncio.to_thread(
-            subprocess.run, [sys.executable, "-c", "import yt_dlp.version as v;print(v.__version__)"],
-            capture_output=True, text=True)
-        new_version = new.stdout.strip()
-        if new_version and new_version != yt_dlp.version.__version__:
+        try:
+            res = await asyncio.to_thread(healer.update, None, "manuell")
+        except RuntimeError as e:
+            raise HTTPException(500, str(e)) from e
+        if res["changed"]:
             asyncio.get_running_loop().call_later(1.0, _restart)
-            return {"updated": True, "version": new_version, "restarting": True}
-        return {"updated": False, "version": yt_dlp.version.__version__}
+            return {"updated": True, "version": res["version"], "restarting": True}
+        return {"updated": False, "version": res["version"]}
     finally:
         _updating = False
+
+
+@api.get("/healer")
+async def healer_status(request: Request):
+    _need(request, "settings")
+    return healer.status()
+
+
+@api.post("/healer/channel")
+async def healer_channel(request: Request):
+    user = _need(request, "settings")
+    data = await _json(request)
+    if manager.active_count():
+        raise HTTPException(409, "Bitte warten, bis laufende Downloads fertig sind")
+    try:
+        res = await asyncio.to_thread(healer.set_channel, str(data.get("channel")))
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e)) from e
+    log.info("%s hat den yt-dlp-Kanal auf %s gestellt", user.username, healer.channel)
+    if res["changed"]:
+        asyncio.get_running_loop().call_later(1.0, _restart)
+    return {**healer.status(), "restarting": res["changed"], "version": res["version"]}
+
+
+@api.post("/healer/dismiss")
+async def healer_dismiss(request: Request):
+    _need(request, "settings")
+    data = await _json(request)
+    healer.dismiss(str(data.get("id") or ""))
+    return healer.status()
 
 
 def _restart() -> None:
@@ -1166,10 +1263,41 @@ async def healthz():
 @app.get("/manifest.webmanifest")
 async def manifest():
     return JSONResponse({
-        "name": "ScobeTube", "short_name": "ScobeTube", "start_url": "./", "display": "standalone",
-        "background_color": "#07060d", "theme_color": "#07060d",
-        "icons": [{"src": "static/icon.svg", "sizes": "any", "type": "image/svg+xml"}],
+        "id": "./", "name": "ScobeTube", "short_name": "ScobeTube",
+        "description": "Private Video- und Musik-Downloads",
+        "start_url": "./", "scope": "./", "display": "standalone", "lang": "de",
+        "background_color": "#0b0b0c", "theme_color": "#0b0b0c",
+        "icons": [
+            {"src": "static/icon-192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "static/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
+            {"src": "static/icon.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+        # Erscheint im Android-„Teilen“-Menü, sobald die App installiert ist (nur über HTTPS möglich)
+        "share_target": {"action": "share", "method": "GET",
+                         "params": {"title": "title", "text": "text", "url": "url"}},
     }, media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(STATIC_DIR / "sw.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": (config.URL_PREFIX or "") + "/"})
+
+
+@app.get("/share")
+async def share_in(url: str = "", text: str = "", title: str = ""):
+    """Ziel des „Teilen“-Menüs (Android-App) bzw. iPhone-Kurzbefehls.
+
+    Startet nichts selbst: öffnet ScobeTube mit dem Link, gestartet wird erst per Tippen
+    (Schutz gegen untergeschobene Downloads). Anmeldung ist wie überall Pflicht."""
+    found = _extract_urls(" ".join([url, text]))
+    params = {"share": "1"}
+    if found:
+        params["url"] = found[0]
+    if title:
+        params["title"] = title[:200]
+    return RedirectResponse("./?" + urlencode(params), status_code=303)
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

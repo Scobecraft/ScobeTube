@@ -19,6 +19,7 @@ from yt_dlp.postprocessor.ffmpeg import FFmpegSplitChaptersPP
 from yt_dlp.utils import DownloadCancelled, download_range_func
 
 from . import config, imgproxy, spotify, tags
+from .healer import healer
 
 log = logging.getLogger("scobetube")
 
@@ -135,6 +136,7 @@ class Item:
     spotify: dict[str, Any] | None = None   # Spotify-Metadaten (Titel, Interpreten, Album, Cover …)
     match_url: str | None = None  # gefundener Song auf YouTube Music
     keep: bool = False            # 📌 von der Auto-Löschung ausnehmen
+    shared_with: list[str] = field(default_factory=list)   # Benutzernamen (klein), die den Download sehen dürfen
     chapter: dict[str, Any] | None = None   # gesetzt, wenn dies ein Kapitel eines größeren Downloads ist
 
     def public(self) -> dict[str, Any]:
@@ -393,7 +395,7 @@ class Manager:
             # Platzhalter entfernen, Einträge einzeln einreihen
             with self.lock:
                 self.items.pop(item.id, None)
-            self.emit("removed", {"id": item.id, "owner": item.owner})
+            self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
             for e in entries:
                 url = e.get("webpage_url") or e.get("url")
                 if not url:
@@ -457,7 +459,7 @@ class Manager:
         album_cover = data.get("cover") if data["kind"] == "album" else None
         with self.lock:
             self.items.pop(item.id, None)
-        self.emit("removed", {"id": item.id, "owner": item.owner})
+        self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
         for t in tracks:
             child = Item(url=f"https://open.spotify.com/track/{t['id']}", options=item.options, playlist=ptitle,
                          owner=item.owner)
@@ -599,12 +601,24 @@ class Manager:
             self.items.pop(item.id, None)
             for c in children:
                 self.items[c.id] = c
-        self.emit("removed", {"id": item.id, "owner": item.owner})
+        self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
         for n, c in enumerate(children):
             self._count(c, downloads=1 if n == 0 else 0)  # ein Video = ein Download
             self.emit("added", c.public())
         self._schedule_save()
         log.info("„%s“ in %d Kapitel aufgeteilt", title, len(children))
+
+    def set_shared(self, item_id: str, names: list[str]) -> Item | None:
+        item = self.items.get(item_id)
+        if not item:
+            return None
+        before = set(item.shared_with)
+        item.shared_with = sorted(set(names))
+        # Wer nicht mehr berechtigt ist, bekommt den Eintrag entfernt
+        for gone in before - set(item.shared_with):
+            self.emit("revoked", {"id": item.id, "user": gone})
+        self._update(item)
+        return item
 
     def set_keep(self, item_id: str, keep: bool) -> Item | None:
         item = self.items.get(item_id)
@@ -643,6 +657,10 @@ class Manager:
 
     def _fail(self, item: Item, e: Exception) -> None:
         msg = str(e)
+        try:  # Selbstheilung über typische „YouTube hat etwas geändert“-Fehler informieren
+            healer.report_failure(item.id, re.sub(r"\x1b\[[0-9;]*m", "", msg), item.url)
+        except Exception:  # noqa: BLE001
+            pass
         if msg.startswith("ERROR: "):
             msg = msg[7:]
         msg = re.sub(r"\x1b\[[0-9;]*m", "", msg)
@@ -702,7 +720,7 @@ class Manager:
             self.delete_file(item)
         with self.lock:
             self.items.pop(item_id, None)
-        self.emit("removed", {"id": item_id, "owner": item.owner})
+        self.emit("removed", {"id": item_id, "owner": item.owner, "shared_with": item.shared_with})
         self._schedule_save()
         return True
 
@@ -757,7 +775,7 @@ class Manager:
         for item in [i for i in self.items.values() if i.status in FINISHED and not i.keep]:
             with self.lock:
                 self.items.pop(item.id, None)
-            self.emit("removed", {"id": item.id, "owner": item.owner})
+            self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
         self._schedule_save()
         log.info("Speicher geleert: %d Dateien, %d Bytes", count, freed)
         return count, freed
@@ -822,7 +840,7 @@ class Manager:
         for item in old:
             with self.lock:
                 self.items.pop(item.id, None)
-            self.emit("removed", {"id": item.id, "owner": item.owner})
+            self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
         if files or old:
             self._schedule_save()
             log.info("Auto-Löschung: %d Dateien (%d Bytes) und %d Einträge entfernt", files, freed, len(old))

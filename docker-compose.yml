@@ -19,7 +19,8 @@ services:
       # Optional: Betreiberangaben auf der Seite „Rechtliches“
       # - OPERATOR_NAME=Dein Name
       # - OPERATOR_CONTACT=deine@mail.de
-      # Hinter einem Reverse-Proxy (nginx, Traefik, Caddy …) dessen IP eintragen,
-      # damit Login-Schutz und HTTPS-Erkennung die echte Besucher-IP sehen:
-      # - TRUSTED_PROXIES=172.17.0.1
+      # Hinter Cloudflare-Tunnel oder Reverse-Proxy (nginx, Traefik, Caddy …):
+      # damit Login-Schutz und HTTPS-Erkennung die echte Besucher-IP sehen.
+      # "*" ist ok, solange Port 8081 nicht direkt aus dem Internet erreichbar ist.
+      # - TRUSTED_PROXIES=*
       # - YTDLP_CHANNEL=nightly

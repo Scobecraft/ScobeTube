@@ -25,6 +25,7 @@ PERMISSIONS: dict[str, str] = {
     "delete": "Eigene Einträge & Dateien löschen",
     "view_all": "Downloads aller Benutzer sehen & verwalten",
     "keep": "Downloads dauerhaft behalten (📌 – keine Auto-Löschung)",
+    "share": "Downloads mit anderen Benutzern teilen (nur über HTTPS)",
     "storage": "Speicher leeren (alle Downloads löschen)",
     "settings": "Einstellungen (yt-dlp-Update, Cookies, Systemmonitor)",
     "admin": "Administrator (alle Rechte + Benutzerverwaltung)",

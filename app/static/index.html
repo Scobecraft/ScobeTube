@@ -45,6 +45,8 @@
       </div>
     </header>
 
+    <div class="notices" id="notices"></div>
+
     <section class="hero">
       <h1 class="mega" aria-label="ScobeTube"><span class="row" data-split>Scobe</span><span class="row r2" data-split>Tube</span></h1>
       <div class="hero-side">
@@ -210,8 +212,16 @@
       </div>
 
       <div class="section" id="secUpdate" hidden>
-        <div class="txt"><h4>yt-dlp aktualisieren</h4><p>Wenn YouTube oder SoundCloud etwas ändern, hilft meist ein Update. Installiert: <b id="ytdlpVersion2">…</b></p></div>
-        <div class="acts"><button class="btn" id="updateBtn"><span>Aktualisieren</span></button></div>
+        <div class="txt"><h4>yt-dlp &amp; Selbstheilung <span class="pill" id="healPill">aktiv</span></h4>
+          <p>Installiert: <b id="ytdlpVersion2">…</b>. ScobeTube prüft täglich auf Updates. Schlagen mehrere Downloads wegen einer Änderung bei YouTube &amp; Co. fehl, repariert es sich selbst (Update, notfalls Nightly) und versucht sie erneut.</p>
+          <div class="heal-row">
+            <span class="label">Kanal</span>
+            <div class="chips" id="channelChips"><button type="button" class="chip" data-ch="stable">Stable</button><button type="button" class="chip" data-ch="nightly">Nightly</button></div>
+            <span class="label" id="lastCheck"></span>
+          </div>
+          <ul class="heal-history mono" id="healHistory"></ul>
+        </div>
+        <div class="acts"><button class="btn" id="updateBtn"><span>Jetzt prüfen</span></button></div>
       </div>
 
       <div class="section" id="secCookies" hidden>
@@ -220,6 +230,19 @@
           <label class="btn"><input type="file" id="cookieFile" accept=".txt,text/plain" hidden><span>Hochladen</span></label>
           <button class="btn ghost" id="cookieDelete" hidden>Entfernen</button>
         </div>
+      </div>
+
+      <div class="section" id="secPhone" hidden>
+        <div class="txt"><h4>📱 Vom Handy teilen</h4>
+          <p class="warn-box" id="phoneInsecure" hidden>⚠ Teilen vom Handy geht nur über die verschlüsselte HTTPS-Adresse. Öffne ScobeTube über <b>https://…</b>.</p>
+          <div id="phoneHelp">
+            <p><b>Android:</b> ScobeTube in Chrome öffnen → Menü ⋮ → <b>„App installieren“</b> (oder „Zum Startbildschirm“). Danach steht ScobeTube in YouTube, Spotify &amp; Co. unter <b>Teilen</b> zur Auswahl.</p>
+            <p><b>iPhone:</b> In der App <b>Kurzbefehle</b> einen neuen Kurzbefehl anlegen → „In Share-Sheet anzeigen“ aktivieren (Typ: URLs, Text) → Aktion <b>„URL öffnen“</b> mit dieser Adresse, an die du die <i>Kurzbefehl-Eingabe</i> anhängst:</p>
+            <code class="secret" id="shareTemplate"></code>
+            <p class="legal-small">Gestartet wird nichts automatisch: Du wählst nach dem Teilen mit einem Tipp „Video“ oder „Audio“. Ohne Anmeldung geht nichts.</p>
+          </div>
+        </div>
+        <div class="acts"><button class="btn ghost small" id="copyTemplate">Adresse kopieren</button></div>
       </div>
 
       <div class="section" id="secBookmarks" hidden>
@@ -320,6 +343,36 @@
     </div>
   </div>
 
+  <!-- Geteilter Link (vom Handy) -->
+  <div class="modal" id="shareSheet" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card share-sheet" role="dialog" aria-labelledby="sheetTitle">
+      <div class="modal-head"><h2 id="sheetTitle">📲 Geteilt</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <p class="sheet-name" id="sheetName"></p>
+      <code class="secret" id="sheetUrl"></code>
+      <div class="sheet-acts">
+        <button class="btn accent sheet-btn" id="sheetVideo" type="button"><span class="big">🎬</span>Video laden<small>MP4 · beste Qualität</small></button>
+        <button class="btn accent sheet-btn" id="sheetAudio" type="button"><span class="big">🎵</span>Audio laden<small>MP3 · mit Cover</small></button>
+      </div>
+      <button class="linkish" id="sheetCustom" type="button">Lieber selbst einstellen …</button>
+    </div>
+  </div>
+
+  <!-- Mit Benutzern teilen -->
+  <div class="modal" id="shareUsers" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="shareUsersTitle">
+      <div class="modal-head"><h2 id="shareUsersTitle">👥 Teilen</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <p class="sheet-name" id="shareItemName"></p>
+      <p class="warn-box" id="shareInsecure" hidden>⚠ Teilen ist nur über die verschlüsselte HTTPS-Adresse möglich.</p>
+      <p class="em-hint">Nur Personen mit Konto sehen den Download in ihrer Liste und können ihn abspielen und herunterladen. Ändern oder löschen kannst nur du. Es gibt keine öffentlichen Links.</p>
+      <input class="input" id="shareFilter" placeholder="Benutzer suchen …" autocomplete="off">
+      <div class="perm-grid share-list" id="shareList"></div>
+      <div class="form-msg" id="shareMsg"></div>
+      <div><button class="btn accent" id="shareSave" type="button">Speichern</button></div>
+    </div>
+  </div>
+
   <!-- Passwort bestätigen -->
   <div class="modal" id="confirmModal" aria-hidden="true">
     <div class="modal-bg" data-close></div>
@@ -413,7 +466,7 @@
         <span class="dur"></span>
       </div>
       <div class="body">
-        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag chap"></span><span class="tag sb"></span><span class="tag kept"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
+        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag chap"></span><span class="tag sb"></span><span class="tag kept"></span><span class="tag shared"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
         <h3 class="title"></h3>
         <div class="sub"></div>
         <div class="cells"></div>
@@ -423,6 +476,7 @@
       <div class="actions">
         <button class="act play" title="Abspielen"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></button>
         <button class="act pin" title="Behalten (keine Auto-Löschung)"><svg viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4zM12 13v8"/></svg></button>
+        <button class="act share" title="Mit Benutzern teilen"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M19 8v6M16 11h6"/></svg></button>
         <button class="act edit" title="Titel, Interpret &amp; Cover bearbeiten"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
         <a class="act open" title="Originalseite öffnen" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/></svg></a>
         <a class="act primary dl" title="Herunterladen" download><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg></a>
