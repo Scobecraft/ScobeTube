@@ -26,7 +26,11 @@
       body: JSON.stringify(body),
     });
     let data = null; try { data = await res.json(); } catch { /* leer */ }
-    if (!res.ok) throw new Error((data && data.detail) || `Fehler ${res.status}`);
+    if (!res.ok) {
+      const err = new Error((data && data.detail) || `Fehler ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     return data;
   }
 
@@ -90,9 +94,14 @@
     $("#heading").textContent = "Zweiter Schritt";
     $("#lead").textContent = "Bestätige, dass du es wirklich bist.";
     const pk = res.methods.passkey, totp = res.methods.totp;
-    const pkOk = pk && window.ScobePasskey.available();
+    // In der Android-App (WebView) gibt es keine Passkeys – dort nur Code bzw. Wiederherstellungscode
+    const inApp = !!window.ScobeAndroid || /ScobeTubeApp\//.test(navigator.userAgent);
+    const pkOk = pk && !inApp && window.ScobePasskey.available();
     $("#pkLogin").hidden = !pkOk;
-    $("#pkInsecure").hidden = !(pk && !window.ScobePasskey.secure());
+    $("#pkInsecure").hidden = !(pk && !pkOk);
+    $("#pkInsecure").textContent = inApp
+      ? "Passkeys funktionieren in der App nicht – bitte den Code aus der Authenticator-App oder einen Wiederherstellungscode verwenden (oder im Browser anmelden)."
+      : "Passkeys gehen nur über HTTPS. Bitte den Code aus der Authenticator-App oder einen Wiederherstellungscode nutzen.";
     $("#orLine").hidden = !(pkOk && (totp || res.methods.recovery));
     setRecovery(!totp);
     $("#useRecovery").hidden = !totp || !res.methods.recovery;
@@ -108,20 +117,27 @@
     $("#useRecovery").textContent = on ? "Code aus der App verwenden" : "Wiederherstellungscode verwenden";
   }
   $("#useRecovery").addEventListener("click", () => { setRecovery(!recoveryMode); $("#code").focus(); });
-  $("#backBtn").addEventListener("click", () => location.reload());
+  $("#backBtn").addEventListener("click", () => location.replace("login"));
 
-  function fail2(text) {
-    $("#msg2").textContent = text;
-    card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake");
-    $("#code").select();
-    if (/abgelaufen|erneut/.test(text)) setTimeout(() => location.reload(), 2500);
+  // Fehler bleiben stehen – die Seite lädt sich nie von selbst neu
+  function fail2(err, gentle = false) {
+    $("#msg2").textContent = err.message || String(err);
+    if (!gentle) { card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake"); }
+    if (err.status === 410) {
+      // Ticket abgelaufen → klarer Knopf zurück zur Passwort-Eingabe
+      $("#backBtn").textContent = "→ Zurück zur Anmeldung";
+      $("#backBtn").classList.add("pulse");
+      $("#code").disabled = true;
+    } else {
+      $("#code").select();
+    }
   }
   async function submitCode() {
     const code = $("#code").value.trim();
     if (!code) return;
     const b = $("#codeSubmit"); b.classList.add("loading"); b.disabled = true; $("#msg2").textContent = "";
     try { await post("auth/login/2fa", { ticket, code }); success(); }
-    catch (err) { fail2(err.message); }
+    catch (err) { fail2(err); }
     finally { b.classList.remove("loading"); b.disabled = false; }
   }
   $("#codeForm").addEventListener("submit", (e) => { e.preventDefault(); submitCode(); });
@@ -138,7 +154,10 @@
       const credential = await window.ScobePasskey.get(opts);
       await post("auth/login/passkey", { ticket, credential });
       success();
-    } catch (err) { fail2(err.message); }
+    } catch (err) {
+      // Abgebrochen (z. B. Fenster weggeklickt) ist kein Drama – kein Wackeln, Code geht weiterhin
+      fail2(err, !err.status);
+    }
     finally { b.classList.remove("busy"); }
   }
   $("#pkLogin").addEventListener("click", passkeyLogin);

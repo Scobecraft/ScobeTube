@@ -1037,3 +1037,5 @@ html { overflow-x: hidden; }
 .login-app { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; font: 600 12px var(--mono); color: var(--paper-2); text-decoration: underline; text-underline-offset: 3px; }
 .login-app:hover { color: var(--accent); }
 @media (max-width: 720px) { .app-banner p { font-size: 12px; } .app-banner .mono { display: none; } }
+
+.linkish.pulse { color: var(--accent); animation: pop .9s var(--spring) infinite alternate; display: inline-block; }

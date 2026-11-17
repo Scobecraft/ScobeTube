@@ -432,10 +432,13 @@ class TicketStore:
             self.tickets[token] = LoginTicket(username, remember, ip, now + self.TTL)
         return token
 
-    def get(self, token: str, ip: str) -> LoginTicket | None:
+    def get(self, token: str) -> LoginTicket | None:
+        """Ticket für den 2. Schritt. Bewusst NICHT an die IP gebunden: Handys wechseln oft die
+        Adresse (IPv4/IPv6, WLAN/Mobilfunk, Cloudflare). Sicher bleibt es trotzdem – 256 Bit Zufall,
+        5 Minuten gültig, höchstens 5 Versuche, und es entsteht nur nach richtigem Passwort."""
         with self.lock:
             t = self.tickets.get(token or "")
-            if not t or t.expires < time.time() or t.ip != ip or t.attempts >= self.MAX_ATTEMPTS:
+            if not t or t.expires < time.time() or t.attempts >= self.MAX_ATTEMPTS:
                 return None
             return t
 

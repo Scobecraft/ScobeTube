@@ -341,7 +341,7 @@ def _login_response(request: Request, user: User, remember: bool) -> JSONRespons
 
 
 async def _second_factor_failed(request: Request, ticket_id: str, username: str, msg: str):
-    t = tickets.get(ticket_id, _client_ip(request))
+    t = tickets.get(ticket_id)
     if t:
         t.attempts += 1
     limiter.failed(_client_ip(request), username)
@@ -351,11 +351,13 @@ async def _second_factor_failed(request: Request, ticket_id: str, username: str,
 
 
 def _ticket_user(request: Request, ticket_id: str):
-    t = tickets.get(ticket_id, _client_ip(request))
+    t = tickets.get(ticket_id)
     user = users.get(t.username) if t else None
     if not t or not user or user.disabled:
-        raise HTTPException(401, "Anmeldung abgelaufen – bitte noch einmal mit Passwort anmelden")
-    wait = limiter.retry_after(_client_ip(request), user.username)
+        # 410 = „abgelaufen“: die Seite bietet dann „Zurück zur Anmeldung“ an
+        raise HTTPException(410, "Die Anmeldung ist abgelaufen (nach 5 Minuten oder 5 Fehlversuchen). "
+                                 "Bitte noch einmal mit Passwort anmelden.")
+    wait = limiter.retry_after(t.ip, user.username)
     if wait:
         raise HTTPException(429, f"Zu viele Fehlversuche. Bitte in {max(1, round(wait / 60))} Minuten erneut versuchen.")
     return t, user
