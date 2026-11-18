@@ -10,6 +10,7 @@ import html
 import json
 import logging
 import re
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -17,17 +18,28 @@ log = logging.getLogger("scobetube.tidal")
 
 URL_RE = re.compile(
     r"https?://(?:www\.|listen\.|embed\.)?tidal\.com/(?:browse/)?(?:[a-z]{2}/)?"
-    r"(track|album|playlist|mix|tracks|albums|playlists|mixes)/(?:[a-z0-9-]+/)?([A-Za-z0-9-]+)", re.I)
+    r"(track|album|playlist|mix|tracks|albums|playlists|mixes)/([^?#\s]+)", re.I)
 _KIND = {"tracks": "track", "albums": "album", "playlists": "playlist", "mixes": "mix"}
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _UA = "Mozilla/5.0 (compatible; ScobeTube)"
 
 
 def parse_url(url: str) -> tuple[str, str] | None:
+    """Erkennt Tidal-Links in allen üblichen Formen, z. B.
+    tidal.com/track/123, tidal.com/browse/track/123/u, listen.tidal.com/album/123,
+    tidal.com/album/name-des-albums/123, tidal.com/playlist/<uuid>."""
     m = URL_RE.search(url or "")
     if not m:
         return None
     kind = _KIND.get(m.group(1).lower(), m.group(1).lower())
-    return kind, m.group(2)
+    parts = [p for p in m.group(2).split("/") if p]
+    if kind in ("track", "album"):
+        tid = next((p for p in parts if p.isdigit()), None)          # Zahl; Namens-Teile und „/u“ ignorieren
+    elif kind == "playlist":
+        tid = next((p for p in parts if _UUID.match(p)), None)
+    else:  # mix
+        tid = next((p for p in parts if re.fullmatch(r"[0-9a-f]{10,}", p, re.I)), None)
+    return (kind, tid) if tid else None
 
 
 def _get(url: str) -> str:
@@ -37,7 +49,11 @@ def _get(url: str) -> str:
 
 
 def _embed(kind: str, tid: str) -> tuple[dict[str, Any], str]:
-    page = _get(f"https://embed.tidal.com/{kind}s/{tid}")
+    try:
+        page = _get(f"https://embed.tidal.com/{kind}s/{tid}")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Tidal kennt diesen Link nicht oder er ist nicht öffentlich (Fehler {e.code}). "
+                           "Bitte in Tidal über „Teilen → Link kopieren“ einen Song-, Album- oder Playlist-Link holen.") from None
     m = re.search(r"tidalMediaSessionMetadata\s*=\s*(\{.*?\});", page, re.S)
     if not m:
         raise RuntimeError("Tidal-Seite konnte nicht gelesen werden (privat oder nicht verfügbar?)")
