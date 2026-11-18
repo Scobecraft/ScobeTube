@@ -115,7 +115,7 @@ PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status
                 "/api/app/version", "/app/download", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
 PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js", "/static/md.js",
                  "/static/icon.svg", "/static/icon-192.png", "/static/icon-512.png",
-                 "/static/icon-maskable-512.png"}
+                 "/static/icon-maskable-512.png", "/static/potato.js"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 CSP = ("default-src 'self'; "

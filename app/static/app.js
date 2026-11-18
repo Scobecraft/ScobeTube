@@ -3,7 +3,10 @@
   "use strict";
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceMotionPref = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const potato = () => !!(window.ScobePotato && window.ScobePotato.on());
+  // „motion.reduced“ gilt auch im Potato-Modus (wird bei jedem Zugriff neu geprüft)
+  const motion = { get reduced() { return reduceMotionPref || potato(); } };
 
   const SOURCES = {
     all: {
@@ -107,7 +110,11 @@
     const t = el("div", `toast ${type}`);
     t.append(el("span", "ti", type === "success" ? "✓" : type === "error" ? "!" : "i"), el("span", "", msg));
     $("#toasts").appendChild(t);
-    setTimeout(() => { t.classList.add("out"); t.addEventListener("animationend", () => t.remove(), { once: true }); }, ms);
+    setTimeout(() => {
+      if (potato()) { t.remove(); return; }
+      t.classList.add("out"); t.addEventListener("animationend", () => t.remove(), { once: true });
+      setTimeout(() => t.remove(), 600);   // Sicherheitsnetz
+    }, ms);
   }
 
   // ------------------------------------------------- konfetti (eckig)
@@ -130,7 +137,7 @@
       raf = parts.length ? requestAnimationFrame(tick) : null;
     };
     return (x, y, n = 40) => {
-      if (reduceMotion) return;
+      if (motion.reduced) return;
       const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim() || "#c6ff3d";
       const colors = [accent, accent, "#f3f0e7", "#8f6bff", "#ff4d8d"];
       for (let i = 0; i < n; i++) {
@@ -313,7 +320,7 @@
     results.hidden = false;
     $("#resultsTitle").textContent = `Suche: „${q}“`;
     grid.replaceChildren(...Array.from({ length: 8 }, () => el("div", "skeleton")));
-    results.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    results.scrollIntoView({ behavior: motion.reduced ? "auto" : "smooth", block: "start" });
     let data;
     try { data = await api(`search?source=${source}&q=${encodeURIComponent(q)}`); }
     catch (err) { results.hidden = true; throw err; }
@@ -506,7 +513,7 @@
     const first = new Map(nodes.map((n) => [n, n.getBoundingClientRect().top]));
     nodes.forEach((n) => list.appendChild(n));
     $$(".item.leaving", list).forEach((n) => list.appendChild(n));
-    if (reduceMotion) return;
+    if (motion.reduced) return;
     nodes.forEach((n) => {
       const dy = first.get(n) - n.getBoundingClientRect().top;
       if (dy && !n.classList.contains("filtered")) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 550, easing: "cubic-bezier(.22,1,.36,1)" });
@@ -607,6 +614,11 @@
 
     setInterval(() => {
       frame++;
+      if (potato()) {   // 🥔: statischer Titel, nur bei Änderung neu setzen
+        const t = progress === null ? NAME : `${label} · ${NAME}`;
+        if (document.title !== t) document.title = t;
+        return;
+      }
       if (progress === null) {
         document.title = idleFrames[frame % idleFrames.length];
       } else {
@@ -1056,8 +1068,11 @@
     if (area) d += ` L${(off + (points.length - 1) * step).toFixed(1)},100 L${off.toFixed(1)},100 Z`;
     return d;
   }
+  let lastSysPoll = 0;
   async function pollSystem() {
     if (document.hidden || sysPanel.classList.contains("collapsed")) return;
+    if (potato() && Date.now() - lastSysPoll < 6000) return;   // 🥔: nur alle 6 Sekunden
+    lastSysPoll = Date.now();
     try {
       const s = await api("system");
       setGauge("cpu", s.cpu); setGauge("mem", s.mem); setGauge("disk", s.disk);
@@ -1142,7 +1157,7 @@
       return [...state.items.values()].filter((i) => i.status === "done" && i.filename && matchesFilter(i)).sort(cmp);
     }
     function ensureAudioGraph() {
-      if (reduceMotion) return;
+      if (motion.reduced) return;
       try {
         actx = actx || new (window.AudioContext || window.webkitAudioContext)();
         if (!analyser) { analyser = actx.createAnalyser(); analyser.fftSize = 128; analyser.smoothingTimeConstant = .8; analyser.connect(actx.destination); }
@@ -1220,7 +1235,7 @@
         if (i < 0) return;
         openModal("playerModal");
         load(i);
-        if (!raf) draw();
+        if (!raf && !potato()) draw();
       },
       stop() {
         audio.pause(); video.pause();
@@ -1341,7 +1356,7 @@
   function showRecovery(codes) {
     $("#recCodes").hidden = false;
     $("#recGrid").replaceChildren(...codes.map((c) => el("span", "", c)));
-    $("#recCodes").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    $("#recCodes").scrollIntoView({ behavior: motion.reduced ? "auto" : "smooth", block: "center" });
     $("#recCodes").dataset.codes = codes.join("\n");
   }
   async function openSecurity() {
@@ -1536,6 +1551,43 @@
     finally { btn.classList.remove("busy"); }
   });
 
+  // ------------------------------------------------------- 🥔 potato
+  function renderPotato() {
+    const on = potato();
+    $("#potatoPill").textContent = on ? "an" : "aus";
+    $("#potatoPill").classList.toggle("on", on);
+  }
+  $("#menuPotato").addEventListener("click", () => {
+    const on = window.ScobePotato.toggle();
+    renderPotato();
+    $("#potatoSuggest").replaceChildren();
+    toast(on ? "🥔 Potato-Modus an – Animationen & Effekte aus" : "✨ Potato-Modus aus – volle Show", "success");
+  });
+  window.addEventListener("potato", renderPotato);
+  renderPotato();
+
+  // Beim ersten Besuch kurz messen, wie flüssig die Seite läuft – bei Ruckeln den Modus vorschlagen
+  function maybeSuggestPotato() {
+    if (potato() || window.ScobePotato.decided()) return;
+    let frames = 0; const start = performance.now();
+    const count = () => {
+      frames++;
+      if (performance.now() - start < 2500) { requestAnimationFrame(count); return; }
+      const fps = frames / ((performance.now() - start) / 1000);
+      const weak = fps < 28 || (navigator.deviceMemory && navigator.deviceMemory <= 2) || (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2);
+      if (!weak || document.hidden) return;
+      const box = el("div", "potato-suggest");
+      const p = el("p"); p.append(el("b", "", "Ruckelt die Seite?"), `Dein Gerät schafft gerade ca. ${Math.round(fps)} Bilder/s. Der Potato-Modus schaltet Animationen & Effekte ab.`);
+      const yes = el("button", "btn accent small", "🥔 Einschalten"); yes.type = "button";
+      const no = el("button", "btn ghost small", "Nein danke"); no.type = "button";
+      yes.addEventListener("click", () => { window.ScobePotato.set(true); box.remove(); renderPotato(); toast("🥔 Potato-Modus an", "success"); });
+      no.addEventListener("click", () => { window.ScobePotato.set(false); box.remove(); renderPotato(); });
+      box.append(el("span", "big", "🥔"), p, yes, no);
+      $("#potatoSuggest").replaceChildren(box);
+    };
+    setTimeout(() => requestAnimationFrame(count), 3000);   // erst messen, wenn die Startanimationen vorbei sind
+  }
+
   window.ScobeToast = toast;
   window.ScobeFx = fx;
 
@@ -1586,6 +1638,7 @@
     connect(); loadInfo();
     if (can("settings")) { startSystem(); loadHealer(); setInterval(loadHealer, 60000); }
     loadAppInfo();
+    maybeSuggestPotato();
     if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
   }
   boot();

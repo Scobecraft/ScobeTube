@@ -9,6 +9,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="static/fonts/fonts.css">
   <link rel="stylesheet" href="static/style.css">
+  <script src="static/potato.js"></script>
 </head>
 <body data-source="all" data-kind="video">
   <div class="grain" aria-hidden="true"></div>
@@ -41,6 +42,7 @@
             <a class="menu-link" id="menuApp" href="app/download" hidden><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19"/><path d="M11 18.5h2"/></svg>Android-App laden <span class="pill" id="menuAppVer"></span></a>
             <button id="menuAppUpdate" hidden><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Nach App-Update suchen</button>
             <button id="menuServer" hidden><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Server wechseln</button>
+            <button id="menuPotato" title="Animationen & Effekte aus – für schwache PCs"><span class="potato-ico">🥔</span>Potato-Modus <span class="pill potato-pill" id="potatoPill">aus</span></button>
             <button id="menuPassword"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>Passwort ändern</button>
             <button id="menuLogout"><svg viewBox="0 0 24 24"><path d="M15 4h5v16h-5M10 8l-4 4 4 4M6 12h11"/></svg>Abmelden</button>
           </div>
@@ -49,6 +51,7 @@
     </header>
 
     <div class="notices" id="notices"></div>
+    <div id="potatoSuggest"></div>
     <div class="app-banner" id="appBanner" hidden>
       <span class="ab-icon"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg></span>
       <p><b>ScobeTube als Android-App</b>Mit Teilen-Menü, Update-Hinweisen und schickem Intro. <span class="mono" id="appBannerVer"></span></p>

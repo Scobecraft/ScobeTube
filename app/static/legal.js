@@ -9,7 +9,7 @@
     const t = el("div", `toast ${type}`);
     t.append(el("span", "ti", type === "success" ? "✓" : type === "error" ? "!" : "i"), el("span", "", msg));
     $("#toasts").append(t);
-    setTimeout(() => { t.classList.add("out"); t.addEventListener("animationend", () => t.remove(), { once: true }); }, 3800);
+    setTimeout(() => { t.classList.add("out"); t.addEventListener("animationend", () => t.remove(), { once: true }); setTimeout(() => t.remove(), 600); }, 3800);
   }
   async function send(path, method, body) {
     const res = await fetch(path, { method, credentials: "same-origin", headers: { "Content-Type": "application/json", "X-ScobeTube": "1" }, body: body ? JSON.stringify(body) : undefined });

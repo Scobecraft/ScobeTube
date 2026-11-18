@@ -169,6 +169,11 @@
     }).catch(() => { /* egal */ });
   }
 
+  // 🥔 Potato-Modus ein/aus
+  const potatoState = () => { $("#loginPotatoState").textContent = window.ScobePotato && window.ScobePotato.on() ? "an" : "aus"; };
+  $("#loginPotato").addEventListener("click", () => { window.ScobePotato.toggle(); potatoState(); });
+  potatoState();
+
   // Hinweistext (vom Admin bearbeitbar) laden
   fetch("api/legal", { credentials: "same-origin" }).then((r) => r.json()).then((d) => {
     const sec = (d.sections || []).find((x) => x.key === "login");

@@ -1039,3 +1039,32 @@ html { overflow-x: hidden; }
 @media (max-width: 720px) { .app-banner p { font-size: 12px; } .app-banner .mono { display: none; } }
 
 .linkish.pulse { color: var(--accent); animation: pop .9s var(--spring) infinite alternate; display: inline-block; }
+
+/* ==========================================================================
+   🥔 Potato-Modus – alles Teure aus, damit die Seite auch auf schwachen PCs flüssig läuft
+   ========================================================================== */
+html.potato *, html.potato *::before, html.potato *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+html.potato .grain, html.potato .glow, html.potato .dots, html.potato #fx,
+html.potato .deck::before, html.potato .login-art .rings, html.potato #plViz, html.potato .egg-matrix,
+html.potato .sc-wave { display: none !important; }
+/* Elemente, die sonst erst per Animation erscheinen */
+html.potato .deck, html.potato .hero-side { opacity: 1 !important; }
+html.potato .mega .ch, html.potato .login-mega .ch { transform: none !important; }
+/* teure Filter & Unschärfe weg */
+html.potato .glass, html.potato .modal-bg, html.potato .drop, html.potato .toast { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+html.potato .item[data-kind="audio"] img.thumb { display: none !important; }
+html.potato .media img.thumb { filter: none !important; }
+/* Laufbänder stehen still statt zu scrollen */
+html.potato .bands .track { transform: none !important; }
+html.potato .eq span { height: 8px !important; }
+/* kein Wackeln beim Überfahren */
+html.potato .item:hover, html.potato .res:hover, html.potato .chip:hover { transform: none !important; }
+.potato-pill.on { background: var(--accent); color: var(--accent-ink); }
+.potato-suggest { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; margin-top: 8px; background: var(--card); border: 2px solid var(--paper); box-shadow: 5px 5px 0 #c9a26b; }
+.potato-suggest p { margin: 0; flex: 1; min-width: 200px; font-size: 13.5px; color: var(--paper-2); }
+.potato-suggest p b { color: var(--paper); display: block; font-size: 15px; }
+.potato-suggest .big { font-size: 28px; }
+.login-potato { display: inline-flex; gap: 6px; margin-top: 10px; font: 600 12px var(--mono); color: var(--paper-3); text-decoration: underline; text-underline-offset: 3px; background: none; border: 0; cursor: pointer; }
+.login-potato:hover { color: var(--accent); }
