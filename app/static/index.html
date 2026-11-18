@@ -437,13 +437,17 @@
       <div class="modal-head"><span class="label" id="plCounter"></span><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
       <div class="pl-stage" id="plStage">
         <div class="pl-audio" id="plAudioView">
-          <div class="pl-disc" id="plDisc"><div class="pl-label"><img id="plCover" alt="" referrerpolicy="no-referrer"></div></div>
+          <img class="pl-backdrop" id="plBackdrop" alt="" aria-hidden="true">
+          <div class="pl-deck">
+            <div class="pl-disc" id="plDisc"><div class="pl-label"><img id="plCover" alt="" referrerpolicy="no-referrer"></div></div>
+            <div class="pl-sleeve" id="plSleeveBox"><img id="plSleeve" alt="Cover"><span class="pl-sleeve-fb">♫</span></div>
+          </div>
           <canvas id="plViz" width="600" height="160"></canvas>
         </div>
         <video id="plVideo" playsinline hidden></video>
         <audio id="plAudio" hidden></audio>
       </div>
-      <div class="pl-info"><h3 id="plTitle"></h3><p id="plArtist"></p></div>
+      <div class="pl-info"><h3 id="plTitle"></h3><p><span id="plArtist"></span><span class="pl-tags"><span class="tag" id="plAlbum"></span><span class="tag" id="plFormat"></span></span></p></div>
       <div class="pl-seek">
         <span class="mono" id="plCur">0:00</span>
         <input type="range" id="plSeek" min="0" max="1000" value="0" aria-label="Position">

@@ -376,30 +376,56 @@ body[data-source="soundcloud"] .sc-wave { display: flex; }
 .item[data-status="processing"] .ring { opacity: 1; transform: none; animation: rot 1s linear infinite; }
 .item[data-status="processing"] .ring .rv { stroke-dashoffset: 140; }
 
-/* Vinyl für Audio */
-.item[data-kind="audio"] .media { aspect-ratio: 16/9; background: var(--bg-2); display: grid; place-items: center; }
+/* Audio: Plattenhülle mit herausschauender Schallplatte
+   Maße in % der Vorschaubreite (Fläche ist 16:9 → Höhe = 56,25 % der Breite) */
 .vinyl { display: none; }
+.item[data-kind="audio"] .media {
+  aspect-ratio: 16/9;
+  background: radial-gradient(120% 90% at 85% 50%, hsl(var(--accent-h) 100% 55% / .14), transparent 60%), var(--bg-2);
+}
+/* Hülle = das Cover, groß und scharf */
+.item[data-kind="audio"] img.thumb, .item[data-kind="audio"] .fallback {
+  position: absolute; z-index: 2; left: 5%; top: 5%; height: 90%; width: auto; aspect-ratio: 1; inset-inline-end: auto; bottom: auto;
+  object-fit: cover; border: 2px solid var(--paper); box-shadow: 4px 4px 0 rgba(0, 0, 0, .55);
+  filter: none !important; transform: none !important;
+}
+.item[data-kind="audio"] .fallback {
+  display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-size: 30px;
+}
+.item[data-kind="audio"] .fallback::before { content: "♫"; }
+.item[data-kind="audio"] img.thumb.loaded ~ .fallback { display: none; }
+/* Schallplatte steckt hinter der Hülle und schaut heraus */
 .item[data-kind="audio"] .vinyl {
-  display: block; position: relative; z-index: 1; height: 90%; aspect-ratio: 1; border-radius: 50%;
+  display: block; position: absolute; z-index: 1; top: 8%; height: 84%; aspect-ratio: 1; left: 24%;
+  border-radius: 50%;
   background:
     radial-gradient(circle, transparent 0 21%, #0a0a0a 21.5% 23%, transparent 23.5%),
     repeating-radial-gradient(circle, #151515 0 1.5px, #1f1f1f 2px 3px),
     #111;
-  box-shadow: 0 0 0 2px var(--paper), 6px 6px 0 rgba(0,0,0,.4);
-  transition: transform 1s var(--ease);
+  box-shadow: 0 0 0 2px var(--paper), 5px 5px 0 rgba(0, 0, 0, .45);
+  transition: left .7s var(--spring);
 }
 .item[data-kind="audio"] .vinyl::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 30deg, transparent 0 10%, rgba(255,255,255,.12) 14%, transparent 18% 60%, rgba(255,255,255,.08) 64%, transparent 68%); }
 .item[data-kind="audio"] .vinyl .label { position: absolute; inset: 29%; border-radius: 50%; overflow: hidden; background: var(--accent); }
 .item[data-kind="audio"] .vinyl .label img { width: 100%; height: 100%; object-fit: cover; }
 .item[data-kind="audio"] .vinyl .label::after { content: ""; position: absolute; inset: 44%; border-radius: 50%; background: var(--bg); }
-.item[data-kind="audio"] img.thumb { position: absolute; inset: 0; filter: blur(14px) brightness(.4) !important; transform: scale(1.3) !important; }
-.item[data-kind="audio"] .fallback { display: none; }
+/* Beim Laden/Konvertieren und beim Überfahren gleitet sie heraus; beim Laden dreht sie sich */
+.item[data-kind="audio"]:hover .vinyl,
+.item[data-kind="audio"][data-status="downloading"] .vinyl,
+.item[data-kind="audio"][data-status="processing"] .vinyl,
+.item[data-kind="audio"][data-status="preparing"] .vinyl { left: 41%; }
 .item[data-kind="audio"][data-status="downloading"] .vinyl,
 .item[data-kind="audio"][data-status="processing"] .vinyl { animation: spin 1.8s linear infinite; }
-.item[data-kind="audio"]:hover .vinyl { transform: rotate(40deg); }
+.item[data-kind="audio"]:hover .vinyl { animation: spin 3.5s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.item[data-kind="audio"] .ring { width: 86%; height: 86%; }
-.item[data-kind="audio"] .ring circle { stroke-width: 3; }
+/* Fortschrittsring & Prozent liegen auf der Hülle */
+.item[data-kind="audio"] .ring, .item[data-kind="audio"] .pct {
+  inset: auto; left: 5%; top: 5%; height: 90%; width: auto; aspect-ratio: 1; margin: 0; z-index: 3;
+}
+.item[data-kind="audio"][data-status="downloading"] .ring { background: rgba(11, 11, 12, .55); }
+.item[data-kind="audio"] .ring circle { stroke-width: 5; }
+.item[data-kind="audio"][data-status="downloading"] img.thumb,
+.item[data-kind="audio"][data-status="queued"] img.thumb { filter: grayscale(.5) brightness(.75) !important; }
 
 .body { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .tags { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
@@ -1056,7 +1082,6 @@ html.potato .deck, html.potato .hero-side { opacity: 1 !important; }
 html.potato .mega .ch, html.potato .login-mega .ch { transform: none !important; }
 /* teure Filter & Unschärfe weg */
 html.potato .glass, html.potato .modal-bg, html.potato .drop, html.potato .toast { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
-html.potato .item[data-kind="audio"] img.thumb { display: none !important; }
 html.potato .media img.thumb { filter: none !important; }
 /* Laufbänder stehen still statt zu scrollen */
 html.potato .bands .track { transform: none !important; }
@@ -1072,3 +1097,50 @@ html.potato .item:hover, html.potato .res:hover, html.potato .chip:hover { trans
 .login-potato:hover { color: var(--accent); }
 .media .src.tidal { background: #000; color: #fff; outline: 1.5px solid #fff; }
 @media (max-width: 720px) { .src-switch button { font-size: 10px; letter-spacing: 0; } .src-switch button svg { display: none; } }
+
+/* ---------- Player: Plattenhülle & Stimmungslicht ---------- */
+.pl-audio { display: block; height: 340px; background: #070708; }
+.pl-backdrop {
+  position: absolute; inset: -60px; width: calc(100% + 120px); height: calc(100% + 120px); object-fit: cover;
+  filter: blur(48px) saturate(1.5) brightness(.45); opacity: 0; transition: opacity .8s;
+}
+.pl-backdrop.loaded { opacity: 1; }
+.pl-audio::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 40% 45%, transparent 30%, rgba(7,7,8,.75) 85%); pointer-events: none; }
+.pl-deck { position: absolute; z-index: 2; left: 50%; top: 26px; width: 380px; height: 210px; margin-left: -190px; }
+.pl-sleeve {
+  position: absolute; left: 0; top: 0; z-index: 2; width: 210px; height: 210px; overflow: hidden;
+  background: var(--accent); border: 2px solid var(--paper); box-shadow: 9px 9px 0 var(--accent), 9px 9px 0 2px var(--paper);
+  display: grid; place-items: center; transition: transform .6s var(--spring);
+}
+.pl-sleeve img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pl-sleeve img:not([src]) { display: none; }
+.pl-sleeve-fb { font-size: 70px; color: var(--accent-ink); }
+.player .pl-disc {
+  position: absolute; z-index: 1; top: 8px; left: 30px; width: 194px; height: 194px; margin: 0;
+  box-shadow: 0 0 0 2px var(--paper), 6px 6px 0 rgba(0,0,0,.5);
+  transition: left .8s var(--spring);
+}
+.player.playing .pl-disc { left: 172px; }
+.player.playing .pl-sleeve { transform: rotate(-3deg) translateY(-2px); }
+#plViz { height: 92px; z-index: 1; opacity: .95; }
+.pl-info p { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.pl-tags { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.pl-tags .tag:empty { display: none; }
+@media (max-width: 720px) {
+  .pl-audio { height: 290px; }
+  .pl-deck { top: 22px; width: 290px; height: 165px; margin-left: -145px; }
+  .pl-sleeve { width: 165px; height: 165px; box-shadow: 6px 6px 0 var(--accent), 6px 6px 0 2px var(--paper); }
+  .player .pl-disc { width: 150px; height: 150px; top: 7px; left: 22px; }
+  .player.playing .pl-disc { left: 128px; }
+  .pl-sleeve-fb { font-size: 54px; }
+  #plViz { height: 80px; }
+}
+html.potato .pl-backdrop { display: none; }
+/* Player: bei Pause ist die Hülle mittig, beim Abspielen schiebt die Platte das Paket nach links */
+.pl-deck { transform: translateX(71px); transition: transform .8s var(--spring); }
+.player.playing .pl-deck { transform: none; }
+@media (max-width: 720px) {
+  .pl-deck { transform: translateX(53px); }
+  .item[data-kind="audio"] .media .src { font-size: 7.5px; padding: 2px 4px; left: 4px; top: 4px; }
+  .item[data-kind="audio"] .media .dur { font-size: 9px; padding: 1px 4px; right: 4px; bottom: 4px; }
+}

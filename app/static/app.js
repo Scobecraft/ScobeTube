@@ -1175,18 +1175,29 @@
         if (actx.state === "suspended") actx.resume();
       } catch { analyser = null; }
     }
+    const peaks = [];
     function draw() {
       const w = canvas.width = canvas.clientWidth * devicePixelRatio, h = canvas.height = canvas.clientHeight * devicePixelRatio;
       cctx.clearRect(0, 0, w, h);
       const accent = getComputedStyle(document.body).getPropertyValue("--accent").trim();
-      const n = 48, gap = 3 * devicePixelRatio, bw = (w - gap * (n - 1)) / n;
+      const n = 56, gap = 4 * devicePixelRatio, bw = (w - gap * (n - 1)) / n, cap = 3 * devicePixelRatio;
       let data = null;
       if (analyser) { data = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(data); }
+      peaks.length = n;
       for (let i = 0; i < n; i++) {
-        let v = data ? data[Math.floor(i / n * data.length * .8)] / 255 : (audio.paused ? .04 : .2 + .15 * Math.sin(Date.now() / 200 + i));
-        const bh = Math.max(3 * devicePixelRatio, v * h * .95);
-        cctx.fillStyle = i % 6 === 0 ? "#f3f0e7" : accent;
-        cctx.fillRect(i * (bw + gap), h - bh, bw, bh);
+        // Bässe links, Höhen rechts – leicht logarithmisch verteilt, damit es lebendiger aussieht
+        const bin = data ? Math.floor(Math.pow(i / n, 1.6) * data.length * .85) : 0;
+        let v = data ? data[bin] / 255 : (audio.paused ? .03 : .18 + .12 * Math.sin(Date.now() / 220 + i * .5));
+        const bh = Math.max(2 * devicePixelRatio, v * h * .82);
+        const x = i * (bw + gap);
+        const grad = cctx.createLinearGradient(0, h - bh, 0, h);
+        grad.addColorStop(0, accent); grad.addColorStop(1, "rgba(0,0,0,0)");
+        cctx.fillStyle = grad;
+        cctx.fillRect(x, h - bh, bw, bh);
+        // Spitzen-Markierung fällt langsam nach unten
+        peaks[i] = Math.max((peaks[i] || 0) - h * .012, bh);
+        cctx.fillStyle = "#f3f0e7";
+        cctx.fillRect(x, h - peaks[i] - cap * 2, bw, cap);
       }
       raf = requestAnimationFrame(draw);
     }
@@ -1203,8 +1214,12 @@
       $("#plTitle").textContent = it.title; $("#plTitle").title = it.title;
       $("#plArtist").textContent = it.uploader || it.playlist || "";
       $("#plCounter").textContent = queue.length > 1 ? `${idx + 1} / ${queue.length}` : "Player";
-      const cover = $("#plCover");
-      if (it.thumbnail) cover.src = it.thumbnail; else cover.removeAttribute("src");
+      const cover = $("#plCover"), sleeve = $("#plSleeve"), backdrop = $("#plBackdrop");
+      backdrop.classList.remove("loaded");
+      for (const img of [cover, sleeve, backdrop]) { if (it.thumbnail) img.src = it.thumbnail; else img.removeAttribute("src"); }
+      backdrop.onload = () => backdrop.classList.add("loaded");
+      $("#plAlbum").textContent = it.spotify?.album || it.playlist || "";
+      $("#plFormat").textContent = (it.options.format || "").toUpperCase() + (it.filesize ? " · " + fmtBytes(it.filesize) : "");
       seek.value = 0; setRange(seek); $("#plCur").textContent = "0:00"; $("#plDur").textContent = fmtTime(it.duration) || "0:00";
       if (!isVideo) ensureAudioGraph();
       media.play().catch((err) => { if (err.name === "NotSupportedError") toast("Dieses Format kann dein Browser nicht abspielen", "error"); });
