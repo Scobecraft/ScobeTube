@@ -403,20 +403,20 @@ body[data-source="soundcloud"] .sc-wave { display: flex; }
     repeating-radial-gradient(circle, #151515 0 1.5px, #1f1f1f 2px 3px),
     #111;
   box-shadow: 0 0 0 2px var(--paper), 5px 5px 0 rgba(0, 0, 0, .45);
-  transition: left .7s var(--spring);
+  transition: left .7s var(--spring), transform .7s var(--spring);
 }
 .item[data-kind="audio"] .vinyl::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 30deg, transparent 0 10%, rgba(255,255,255,.12) 14%, transparent 18% 60%, rgba(255,255,255,.08) 64%, transparent 68%); }
 .item[data-kind="audio"] .vinyl .label { position: absolute; inset: 29%; border-radius: 50%; overflow: hidden; background: var(--accent); }
 .item[data-kind="audio"] .vinyl .label img { width: 100%; height: 100%; object-fit: cover; }
 .item[data-kind="audio"] .vinyl .label::after { content: ""; position: absolute; inset: 44%; border-radius: 50%; background: var(--bg); }
-/* Beim Laden/Konvertieren und beim Überfahren gleitet sie heraus; beim Laden dreht sie sich */
+/* Beim Laden/Konvertieren und beim Überfahren rollt sie heraus (einmal, dann bleibt sie stehen) */
 .item[data-kind="audio"]:hover .vinyl,
 .item[data-kind="audio"][data-status="downloading"] .vinyl,
 .item[data-kind="audio"][data-status="processing"] .vinyl,
-.item[data-kind="audio"][data-status="preparing"] .vinyl { left: 41%; }
-.item[data-kind="audio"][data-status="downloading"] .vinyl,
-.item[data-kind="audio"][data-status="processing"] .vinyl { animation: spin 1.8s linear infinite; }
-.item[data-kind="audio"]:hover .vinyl { animation: spin 3.5s linear infinite; }
+.item[data-kind="audio"][data-status="preparing"] .vinyl { left: 41%; transform: rotate(120deg); }
+/* 🥔 Das Herausrollen bleibt auch im Potato-Modus (eine einzelne, sparsame Bewegung) */
+html.potato .item[data-kind="audio"] .vinyl { transition: left .7s var(--spring), transform .7s var(--spring) !important; }
+html.potato .player .pl-disc { transition: left .8s var(--spring) !important; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* Fortschrittsring & Prozent liegen auf der Hülle */
 .item[data-kind="audio"] .ring, .item[data-kind="audio"] .pct {
