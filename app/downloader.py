@@ -18,7 +18,7 @@ import yt_dlp
 from yt_dlp.postprocessor.ffmpeg import FFmpegSplitChaptersPP
 from yt_dlp.utils import DownloadCancelled, download_range_func
 
-from . import config, imgproxy, spotify, tags
+from . import config, imgproxy, spotify, tags, tidal
 from .healer import healer
 
 log = logging.getLogger("scobetube")
@@ -133,7 +133,7 @@ class Item:
     owner: str | None = None      # Benutzername
     source: str | None = None     # z. B. "youtube", "soundcloud", "spotify"
     note: str | None = None       # kurzer Hinweis zum aktuellen Schritt
-    spotify: dict[str, Any] | None = None   # Spotify-Metadaten (Titel, Interpreten, Album, Cover …)
+    spotify: dict[str, Any] | None = None   # Metadaten von Spotify bzw. Tidal (Titel, Interpreten, Album, Cover …)
     match_url: str | None = None  # gefundener Song auf YouTube Music
     keep: bool = False            # 📌 von der Auto-Löschung ausnehmen
     shared_with: list[str] = field(default_factory=list)   # Benutzernamen (klein), die den Download sehen dürfen
@@ -369,7 +369,7 @@ class Manager:
         self.resolver.submit(self._resolve, item)
 
     def _resolve(self, item: Item) -> None:
-        if spotify.parse_url(item.url):
+        if spotify.parse_url(item.url) or tidal.parse_url(item.url):
             self._resolve_spotify(item)
             return
         opts = self._base_opts()
@@ -427,7 +427,11 @@ class Manager:
         if o.kind != "audio" or o.format not in AUDIO_FORMATS:
             item.options = replace(o, kind="audio", format="mp3", quality="best" if o.kind != "audio" else o.quality)
         try:
-            data = spotify.resolve(item.url)
+            svc = tidal if tidal.parse_url(item.url) else spotify
+            name = "tidal" if svc is tidal else "spotify"
+            data = svc.resolve(item.url)
+            if name == "tidal" and data["kind"] == "album" and data["tracks"][0].get("album"):
+                data["title"] = data["tracks"][0]["album"]
         except Exception as e:  # noqa: BLE001
             self._fail(item, e)
             return
@@ -445,11 +449,11 @@ class Manager:
             target.uploader = ", ".join(artists) or None
             target.duration = t.get("duration")
             target.thumbnail = t.get("cover") or cover
-            target.source = "spotify"
+            target.source = name
 
         if data["kind"] == "track":
             fill(item, tracks[0], data.get("cover"))
-            item.url = f"https://open.spotify.com/track/{tracks[0]['id']}"
+            item.url = track_url(name, tracks[0]["id"])
             self._enqueue(item)
             return
 
@@ -461,7 +465,7 @@ class Manager:
             self.items.pop(item.id, None)
         self.emit("removed", {"id": item.id, "owner": item.owner, "shared_with": item.shared_with})
         for t in tracks:
-            child = Item(url=f"https://open.spotify.com/track/{t['id']}", options=item.options, playlist=ptitle,
+            child = Item(url=track_url(name, t["id"]), options=item.options, playlist=ptitle,
                          owner=item.owner)
             if data["kind"] == "album":
                 t = {**t, "album": data["title"]}
@@ -478,7 +482,8 @@ class Manager:
             return item.match_url
         item.note = "Suche den Song auf YouTube Music…"
         self._update(item, persist=False)
-        details = spotify.track_details(item.spotify or {})
+        svc = tidal if item.source == "tidal" else spotify
+        details = svc.track_details(item.spotify or {})
         item.spotify = details
         item.thumbnail = details.get("cover") or item.thumbnail
         match = spotify.find_match(details, self._base_opts())
@@ -851,6 +856,10 @@ class Manager:
 
 
 SPONSOR_CATEGORIES = ("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
+
+
+def track_url(service: str, track_id: str) -> str:
+    return f"https://tidal.com/track/{track_id}" if service == "tidal" else f"https://open.spotify.com/track/{track_id}"
 
 
 class _ChapterSplitter(FFmpegSplitChaptersPP):

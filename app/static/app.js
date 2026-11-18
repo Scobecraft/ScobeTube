@@ -24,6 +24,13 @@
       audio: { formats: ["mp3", "m4a", "opus", "flac", "original"], qualities: ["best", "320", "256", "192", "128"] },
       placeholder: "Spotify-Link: Song, Album, Playlist oder Künstler",
       search: null,
+      note: "Spotify-Musik ist kopiergeschützt. ScobeTube liest deshalb nur Titel, Interpret, Album und Cover von Spotify, lädt denselben Song von YouTube Music und schreibt die Spotify-Infos in die Datei. Unterstützt: Songs, Alben, Playlists und Künstler (Top-Songs).",
+    },
+    tidal: {
+      audio: { formats: ["mp3", "m4a", "opus", "flac", "original"], qualities: ["best", "320", "256", "192", "128"] },
+      placeholder: "Tidal-Link: Song, Album oder Playlist",
+      search: null,
+      note: "Tidal-Musik ist kopiergeschützt. ScobeTube liest deshalb nur Titel, Interpreten, Album, Cover und Länge von Tidal, lädt denselben Song von YouTube Music und schreibt die Tidal-Infos in die Datei. Unterstützt: Songs, Alben und Playlists (bis 50 Songs).",
     },
   };
   const NO_QUALITY = ["flac", "wav", "original"];
@@ -86,7 +93,9 @@
   const qLabel = (kind, q) => q === "best" ? "Beste" : kind === "video" ? (q === "2160" ? "4K" : q === "1440" ? "2K" : q + "p") : q + "k";
   const fLabel = (f) => f === "original" ? "Original" : f.toUpperCase();
   const isUrl = (t) => /https?:\/\/\S+|spotify:(track|album|playlist|artist):/i.test(t);
-  const detectSource = (t) => /open\.spotify\.com\/|spotify:(track|album|playlist|artist):/i.test(t) ? "spotify" : /soundcloud\.com\//i.test(t) ? "soundcloud" : null;
+  const detectSource = (t) => /open\.spotify\.com\/|spotify:(track|album|playlist|artist):/i.test(t) ? "spotify"
+    : /tidal\.com\/(browse\/)?(track|album|playlist|mix)/i.test(t) ? "tidal"
+    : /soundcloud\.com\//i.test(t) ? "soundcloud" : null;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   const restart = (node, cls) => { node.classList.remove(cls); void node.offsetWidth; node.classList.add(cls); };
 
@@ -207,11 +216,12 @@
     document.body.dataset.source = src;
     $$("button", srcSwitch).forEach((b, i) => { b.classList.toggle("active", b.dataset.source === src); if (b.dataset.source === src) srcSwitch.dataset.pos = i; });
     urlEl.placeholder = SOURCES[src].placeholder;
-    $("#playlistLabel").textContent = src === "soundcloud" ? "Ganze Sets & Profile" : src === "spotify" ? "Ganze Alben & Playlists" : "Ganze Playlist";
+    $("#playlistLabel").textContent = src === "soundcloud" ? "Ganze Sets & Profile" : (src === "spotify" || src === "tidal") ? "Ganze Alben & Playlists" : "Ganze Playlist";
+    if (SOURCES[src].note) $("#spNote").textContent = SOURCES[src].note;
     renderChips(animate);
     updateMode();
     requestAnimationFrame(moveKindSlider);
-    if (animate) { const r = srcSwitch.getBoundingClientRect(); fx(r.left + r.width * ({ all: 1, soundcloud: 3, spotify: 5 }[src] / 6), r.bottom, 18); }
+    if (animate) { const r = srcSwitch.getBoundingClientRect(); fx(r.left + r.width * ({ all: 1, soundcloud: 3, spotify: 5, tidal: 7 }[src] / 8), r.bottom, 18); }
   }
   srcSwitch.addEventListener("click", (e) => { const b = e.target.closest("button[data-source]"); if (b && b.dataset.source !== state.source) setSource(b.dataset.source); });
 
@@ -261,7 +271,7 @@
     const detected = detectSource(v);
     if (detected && detected !== state.source && !/youtu/i.test(v)) {
       setSource(detected);
-      toast(detected === "spotify" ? "Spotify-Link erkannt – Spotify-Modus aktiv" : "SoundCloud-Link erkannt – Audio-Modus aktiv", "info", 2500);
+      toast({ spotify: "Spotify-Link erkannt – Spotify-Modus aktiv", tidal: "Tidal-Link erkannt – Tidal-Modus aktiv" }[detected] || "SoundCloud-Link erkannt – Audio-Modus aktiv", "info", 2500);
     }
   }
   const autosize = () => { urlEl.style.height = "auto"; urlEl.style.height = urlEl.scrollHeight + "px"; };
@@ -490,7 +500,7 @@
     node.dataset.hasLink = pageUrl ? "1" : "0";
     if (pageUrl) {
       open.href = pageUrl;
-      const host = it.source === "spotify" ? "Spotify" : it.source === "soundcloud" ? "SoundCloud" : it.source === "youtube" ? "YouTube" : (() => { try { return new URL(pageUrl).hostname.replace(/^www\./, ""); } catch { return "Quelle"; } })();
+      const host = it.source === "spotify" ? "Spotify" : it.source === "tidal" ? "Tidal" : it.source === "soundcloud" ? "SoundCloud" : it.source === "youtube" ? "YouTube" : (() => { try { return new URL(pageUrl).hostname.replace(/^www\./, ""); } catch { return "Quelle"; } })();
       open.title = `Auf ${host} öffnen`;
     } else open.removeAttribute("href");
     const dl = $(".dl", node);
@@ -1462,7 +1472,7 @@
 
   // ---------------------------------------- vom handy geteilter link
   function openShareSheet(url, title) {
-    const audioOnly = /open\.spotify\.com\/|soundcloud\.com\//i.test(url);
+    const audioOnly = /open\.spotify\.com\/|soundcloud\.com\/|tidal\.com\//i.test(url);
     $("#sheetName").textContent = title || "Geteilter Link";
     $("#sheetUrl").textContent = url;
     $("#sheetVideo").hidden = audioOnly;

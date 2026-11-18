@@ -16,6 +16,8 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Lesezeichen-Buttons** („Bookmarklets“): ein Klick auf einer Videoseite, und der Download startet
 - **SoundCloud-Modus:** Tracks, Sets und ganze Profile; Suche direkt in ScobeTube; Ton im Originalformat ohne Qualitätsverlust
 - **Spotify:** Songs, Alben, Playlists und Künstler (Top-Songs). Spotify-Audio ist DRM-geschützt und wird nicht von Spotify geladen. ScobeTube liest nur Titel, Interpret, Album und Cover, sucht denselben Song auf YouTube Music (Abgleich über Länge und Titel) und schreibt die Spotify-Infos samt Cover in die Datei. Wie bei spotDL kann der Abgleich in seltenen Fällen eine andere Version erwischen. Über den ↗-Knopf lässt sich das prüfen.
+- **Tidal:** Songs, Alben und Playlists (bis 50 Songs). Wie bei Spotify werden nur die öffentlichen Angaben (Titel, Interpreten, Album, Cover, Länge) von Tidal gelesen. Der Song selbst kommt von YouTube Music.
+- **🥔 Potato-Modus:** Für schwache PCs schaltet er alle Animationen und Effekte ab (Schalter im Profilmenü und auf der Anmeldeseite, gespeichert pro Gerät). Ruckelt die Seite, wird er automatisch vorgeschlagen.
 - **Fortschritt im Browser-Tab:** Prozentanzeige im Titel und ein Tab-Icon, das sich beim Download füllt
 - **Uptime des Containers** in der Fußzeile, läuft live mit
 - **Selbstheilung:** yt-dlp wird täglich aktualisiert. Schlagen mehrere Downloads wegen einer Änderung bei YouTube & Co. fehl, aktualisiert ScobeTube sich selbst, weicht notfalls auf die Nightly-Version aus, versucht die Downloads erneut und meldet das dem Admin
