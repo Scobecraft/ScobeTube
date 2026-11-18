@@ -197,6 +197,11 @@ async def security(request: Request, call_next):
         response.headers.setdefault(k, v)
     if path.startswith("/api/"):
         response.headers.setdefault("Cache-Control", "no-store")
+    elif path.startswith("/static/"):
+        # Mit Versionskennung (?v=…) darf ewig gecacht werden – die Adresse ändert sich bei jedem Update.
+        # Ohne Kennung: immer kurz beim Server nachfragen (ETag), damit nie alte Dateien hängen bleiben.
+        response.headers["Cache-Control"] = ("public, max-age=31536000, immutable" if request.query_params.get("v")
+                                             else "no-cache")
     return response
 
 
@@ -1355,9 +1360,32 @@ async def share_in(url: str = "", text: str = "", title: str = ""):
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+_ASSET_RE = re.compile(r'(static/[\w./-]+\.(?:js|css))"')
+_page_cache: dict[str, tuple[float, str]] = {}
+
+
+def _asset_version(rel: str) -> str:
+    try:
+        return hashlib.sha256((STATIC_DIR.parent / rel).read_bytes()).hexdigest()[:10]
+    except OSError:
+        return config.APP_VERSION
+
+
+def _page(name: str) -> Response:
+    """HTML-Seite mit ?v=<Inhalts-Hash> an jeder JS/CSS-Datei – nach Updates lädt jeder Browser
+    automatisch die neuen Dateien (auch hinter Cloudflare & Co.)."""
+    path = STATIC_DIR / name
+    newest = max([path.stat().st_mtime] + [p.stat().st_mtime for p in STATIC_DIR.rglob("*") if p.suffix in (".js", ".css")])
+    cached = _page_cache.get(name)
+    if not cached or cached[0] != newest:
+        html_text = _ASSET_RE.sub(lambda m: f'{m.group(1)}?v={_asset_version(m.group(1))}"', path.read_text("utf-8"))
+        _page_cache[name] = cached = (newest, html_text)
+    return Response(cached[1], media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/rechtliches")
 async def legal_page():
-    return FileResponse(STATIC_DIR / "legal.html", headers={"Cache-Control": "no-cache"})
+    return _page("legal.html")
 
 
 @app.get("/api/legal")
@@ -1402,12 +1430,12 @@ async def robots():
 async def login_page(request: Request):
     if request.state.user:
         return RedirectResponse("./", status_code=303)
-    return FileResponse(STATIC_DIR / "login.html", headers={"Cache-Control": "no-store"})
+    return _page("login.html")
 
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
+    return _page("index.html")
 
 
 # Unterstützung für einen URL-Präfix (z. B. hinter einem Reverse-Proxy unter /scobetube)
