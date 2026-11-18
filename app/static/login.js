@@ -173,6 +173,7 @@
   const potatoState = () => { $("#loginPotatoState").textContent = window.ScobePotato && window.ScobePotato.on() ? "an" : "aus"; };
   $("#loginPotato").addEventListener("click", () => { window.ScobePotato.toggle(); potatoState(); });
   potatoState();
+  window.addEventListener("potato", potatoState);
 
   // Hinweistext (vom Admin bearbeitbar) laden
   fetch("api/legal", { credentials: "same-origin" }).then((r) => r.json()).then((d) => {

@@ -596,7 +596,7 @@ html.potato .player .pl-disc { transition: left .8s var(--spring) !important; }
 .popover p { margin: 0 0 2px; font-weight: 700; }
 
 /* Toasts */
-.toasts { position: fixed; z-index: 95; right: 20px; bottom: 20px; display: flex; flex-direction: column-reverse; gap: 10px; width: min(380px, calc(100% - 40px)); pointer-events: none; }
+.toasts { position: fixed; z-index: 95; right: 20px; bottom: 88px; display: flex; flex-direction: column-reverse; gap: 10px; width: min(380px, calc(100% - 40px)); pointer-events: none; }
 .toast {
   display: flex; gap: 12px; align-items: flex-start; padding: 13px 15px; pointer-events: auto;
   background: var(--paper); color: var(--accent-ink); border: 2px solid var(--paper); box-shadow: 5px 5px 0 var(--accent);
@@ -1143,4 +1143,28 @@ html.potato .pl-backdrop { display: none; }
   .pl-deck { transform: translateX(53px); }
   .item[data-kind="audio"] .media .src { font-size: 7.5px; padding: 2px 4px; left: 4px; top: 4px; }
   .item[data-kind="audio"] .media .dur { font-size: 9px; padding: 1px 4px; right: 4px; bottom: 4px; }
+}
+
+/* ---------- 🥔 Schwebende Kartoffel ---------- */
+.potato-fab {
+  position: fixed; right: 20px; bottom: 20px; z-index: 96; width: 54px; height: 54px; display: grid; place-items: center;
+  background: var(--card); border: 2px solid var(--paper); box-shadow: 4px 4px 0 var(--line-soft);
+  cursor: pointer; transition: transform .2s var(--spring), box-shadow .2s, background .2s;
+}
+.potato-fab .pf-emoji { font-size: 28px; line-height: 1; filter: grayscale(1) opacity(.65); transition: filter .25s, transform .3s var(--spring); }
+.potato-fab:hover { transform: translate(-2px, -2px) rotate(-6deg); box-shadow: 6px 6px 0 var(--accent); }
+.potato-fab:hover .pf-emoji { filter: grayscale(.3); }
+.potato-fab:active { transform: translate(3px, 3px); box-shadow: none; }
+.potato-fab.on { background: #2a2014; border-color: var(--accent); box-shadow: 4px 4px 0 var(--accent); }
+.potato-fab.on .pf-emoji { filter: none; }
+.potato-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@keyframes pfBump { 30% { transform: scale(1.25) rotate(-14deg); } 60% { transform: scale(.92) rotate(8deg); } }
+.potato-fab.bump .pf-emoji { animation: pfBump .45s var(--spring); }
+/* auch im Potato-Modus darf die Kartoffel kurz hüpfen */
+html.potato .potato-fab.bump .pf-emoji { animation: pfBump .45s var(--spring) !important; }
+body.selecting .potato-fab { bottom: 92px; }
+@media (max-width: 720px) {
+  .potato-fab { right: 14px; bottom: 14px; width: 46px; height: 46px; }
+  .potato-fab .pf-emoji { font-size: 24px; }
+  .toasts { bottom: 74px; }
 }

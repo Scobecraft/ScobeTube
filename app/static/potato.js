@@ -20,4 +20,31 @@
     // Wurde schon einmal bewusst entschieden? (dann keinen Vorschlag mehr zeigen)
     decided: function () { try { return localStorage.getItem(KEY) !== null; } catch (e) { return true; } },
   };
+
+  // 🥔 Schwebende Kartoffel unten rechts – ein Klick schaltet den Modus um
+  function addButton() {
+    if (document.getElementById("potatoFab")) return;
+    var btn = document.createElement("button");
+    btn.id = "potatoFab";
+    btn.type = "button";
+    btn.className = "potato-fab";
+    btn.innerHTML = '<span class="pf-emoji" aria-hidden="true">🥔</span>';
+    function sync() {
+      var on = window.ScobePotato.on();
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = on ? "Potato-Modus ist AN – klicken für volle Animationen" : "Potato-Modus einschalten (Animationen & Effekte aus)";
+      btn.setAttribute("aria-label", btn.title);
+    }
+    btn.addEventListener("click", function () {
+      var on = window.ScobePotato.toggle();
+      btn.classList.remove("bump"); void btn.offsetWidth; btn.classList.add("bump");
+      if (window.ScobeToast) window.ScobeToast(on ? "🥔 Potato-Modus an – Animationen & Effekte aus" : "✨ Potato-Modus aus – volle Show", "success", 2500);
+    });
+    window.addEventListener("potato", sync);
+    sync();
+    document.body.appendChild(btn);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", addButton);
+  else addButton();
 })();
