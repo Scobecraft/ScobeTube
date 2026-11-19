@@ -6,6 +6,8 @@
     <!-- Nötig, damit die App ihre eigenen Updates installieren kann -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Push-Benachrichtigungen (Speicher-Anfragen, Antworten, Sicherheitswarnungen) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application

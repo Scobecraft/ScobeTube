@@ -1,5 +1,6 @@
 package de.scobecraft.scobetube
 
+import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
@@ -87,6 +88,10 @@ class MainActivity : AppCompatActivity() {
     private var pulse: ObjectAnimator? = null
     private var wobble: ObjectAnimator? = null
 
+    private val notifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) Toast.makeText(this, "🔔 Benachrichtigungen an", Toast.LENGTH_SHORT).show()
+    }
+
     private val fileChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
         fileCallback = null
@@ -127,6 +132,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             loadStart()
             checkForUpdate(force = false)
+            enablePush()
         }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -156,12 +162,32 @@ class MainActivity : AppCompatActivity() {
             checkForUpdate(force = false)
         }
         web.onResume()
+        Push.foreground = true
+        if (server != null) lifecycleScope.launch(Dispatchers.IO) { runCatching { Push.check(applicationContext) } }
     }
 
-    override fun onPause() { web.onPause(); CookieManager.getInstance().flush(); super.onPause() }
+    override fun onPause() {
+        Push.foreground = false
+        web.onPause(); CookieManager.getInstance().flush(); super.onPause()
+    }
+
+    /** Push-Benachrichtigungen: Abfrage im Hintergrund planen und (ab Android 13) einmalig um Erlaubnis fragen. */
+    private fun enablePush() {
+        Push.schedule(applicationContext)
+        if (Build.VERSION.SDK_INT >= 33 && !Push.allowed(this) && !prefs.getBoolean("push_asked", false)) {
+            prefs.edit().putBoolean("push_asked", true).apply()
+            root.postDelayed({ notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) }, 4000)
+        }
+    }
 
     /** „Teilen“ aus anderen Apps: Link wird an /share übergeben – gestartet wird erst per Tipp. */
     private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra(Push.EXTRA_OPEN)?.let { target ->
+            val s = server
+            if (s != null && target.startsWith(s)) pendingShare = target   // Tipp auf eine Benachrichtigung
+            intent.removeExtra(Push.EXTRA_OPEN)
+            return
+        }
         if (intent?.action != Intent.ACTION_SEND) return
         val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
         val title = intent.getStringExtra(Intent.EXTRA_SUBJECT) ?: ""
@@ -385,8 +411,10 @@ class MainActivity : AppCompatActivity() {
             }
             hideSetup()
             hideOffline()
+            if (changed) prefs.edit().remove("push_last").apply()
             if (changed || !pageLoaded) { pageLoaded = false; loadStart() }
             checkForUpdate(force = false)
+            enablePush()
         }
     }
 

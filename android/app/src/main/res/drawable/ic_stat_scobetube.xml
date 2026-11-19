@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Einfarbiges Symbol für die Statusleiste (Android färbt es selbst ein) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M3,3h18v18h-18z M7.5,6.5v11l9,-5.5z"
+        android:fillType="evenOdd" />
+</vector>
