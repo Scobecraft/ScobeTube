@@ -1,3 +1,3 @@
-- 🎉 Erste Version der ScobeTube-App
-- Intro-Animation, Teilen-Menü („In ScobeTube laden“) und Pull-to-Refresh
-- Updates werden automatisch angezeigt und mit einem Tipp installiert
+- 🔔 Push-Benachrichtigungen: Speicher-Anfragen, Antworten der Admins, geteilte Downloads und Sicherheitswarnungen
+- 🎧 Song erkennen, 🕘 Verlauf, 💾 Speicher-Kontingente und 🟢 Mein Spotify (kommen vom Server)
+- Beim ersten Start fragt die App, ob sie Benachrichtigungen schicken darf – bitte erlauben
