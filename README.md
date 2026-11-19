@@ -38,6 +38,12 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Datenschutzfreundlich:** Schriften lokal, Vorschaubilder über den Server. Der Browser kontaktiert keine fremden Server, es gibt kein Tracking und nur ein technisch notwendiges Cookie.
 - **Rechtliches:** Seite mit Hinweis auf private Nutzung, Nutzungsbedingungen und Datenschutzhinweisen (`/rechtliches`); die Instanz ist für Suchmaschinen gesperrt. Als Admin bearbeitest du alle Texte, den Hinweis auf der Anmeldeseite und die Betreiberangaben direkt auf der Seite (✎ Bearbeiten, mit Live-Vorschau).
 - **📚 Mediathek für Navidrome, Jellyfin & Plex:** Behaltene (📌) oder alle Audio-Downloads landen geordnet als `Interpret/Album/Titel` im Ordner `/library`. Die Auto-Löschung fasst sie dort nicht an. Danach stößt ScobeTube automatisch den Scan im Medienserver an. Einstellbar als Admin unter Einstellungen → Mediathek (mit „Verbindung testen“ und „Jetzt alle übernehmen“). Tipp: Den gleichen Host-Ordner (`./library`) im Medienserver-Container als Musik-Ordner einhängen.
+- **🎧 Song erkennen:** Knopf neben dem Eingabefeld. Das Handy 10 Sekunden zur Musik halten oder eine Audio-/Videodatei wählen, und ScobeTube sagt, welcher Song das ist (über AudD). Mit einem Klick wird er als Audio geladen. Ohne API-Schlüssel klappt das ein paar Mal am Tag; einen Schlüssel kann der Admin in den Einstellungen hinterlegen.
+- **🕘 Verlauf:** Alle früheren Downloads mit Suche und Filter, auch nachdem die Datei automatisch gelöscht wurde. Mit ⟳ lädst du einen Eintrag erneut. Einzelne Einträge oder den ganzen Verlauf kann jeder selbst löschen, und das Aufzeichnen lässt sich abschalten.
+- **💾 Speicher-Kontingente:** Jeder Benutzer darf standardmäßig 10 GB auf dem Server belegen (`QUOTA_GB`, Admins unbegrenzt). Im Profilmenü sieht man den Füllstand und kann bei den Admins mehr anfordern. Die Admins bekommen die Anfrage als Push-Nachricht in der App und genehmigen oder lehnen sie in der Benutzerverwaltung ab; pro Benutzer lässt sich das Kontingent auch direkt setzen.
+- **📋 Aktivitätsprotokoll (Admins):** Anmeldungen, Fehlversuche, Downloads, Freigaben, Sicherheits- und Admin-Aktionen mit Zeit, Benutzer und IP. Filter nach Kategorie und Benutzer, Volltextsuche, automatische Löschung nach 7 bis 365 Tagen. Bei 5 Fehlversuchen pro Stunde auf ein Konto bekommen die Admins eine Warnung.
+- **🟢 Mein Spotify:** Über den grünen Knopf über der Kartoffel verbindet jeder sein Konto mit Spotify und sieht, was gerade läuft, was er zuletzt gehört hat, seine Top-Interpreten und Top-Songs (4 Wochen / 6 Monate / alle Zeit) sowie ein Hörprofil mit Genres, Jahrzehnten, Mainstream-Wert, Treue und Hör-Uhrzeiten. Jeden Song lädst du mit einem Klick. Einmalige Einrichtung siehe unten.
+- **🔔 Push-Benachrichtigungen (Android-App):** Speicher-Anfragen, Antworten darauf, geteilte Downloads und Sicherheitswarnungen erscheinen als Benachrichtigung auf dem Handy, ohne Google-Dienste. Die App fragt dafür den eigenen Server ab, im Hintergrund etwa alle 15 Minuten (kürzer erlaubt Android nicht).
 - **Angemeldete Geräte:** Unter „Sicherheit & Geräte“ siehst du, wo du angemeldet bist (Browser, System, IP, zuletzt aktiv) und kannst einzelne oder alle anderen Geräte abmelden. Admins sehen die Geräte jedes Benutzers und können ihn überall abmelden.
 - **Notfall-Werkzeuge für Admins:** Passwort neu setzen (auch als Zufallspasswort), Authenticator-App entfernen, einzelne oder alle Passkeys löschen, Wiederherstellungscodes löschen oder den Zwei-Faktor-Login komplett zurücksetzen. Der Benutzer wird dabei überall abgemeldet.
 - Ein paar versteckte Easter Eggs 🥚
@@ -90,6 +96,10 @@ services:
 | `PLAYLIST_LIMIT` | `0` | Maximale Anzahl Videos pro Playlist (`0` = alle) |
 | `WINDOWS_FILENAMES` | `true` | Dateinamen Windows-/SMB-kompatibel machen |
 | `RETENTION_HOURS` | `10` | Dateien nach so vielen Stunden automatisch löschen (`0` = nie) |
+| `QUOTA_GB` | `10` | Speicher-Kontingent pro Benutzer in GB (`0` = unbegrenzt; Admins immer unbegrenzt) |
+| `AUDIT_DAYS` | `30` | Start-Aufbewahrung des Aktivitätsprotokolls (später in der Oberfläche änderbar) |
+| `AUDD_TOKEN` | – | Optional: API-Schlüssel für die Song-Erkennung (auch in der Oberfläche einstellbar) |
+| `SPOTIFY_CLIENT_ID` | – | Optional: Client-ID der Spotify-App (auch in der Oberfläche einstellbar) |
 | `LIBRARY_DIR` | `/library` | Ordner der Mediathek (für Navidrome, Jellyfin, Plex) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | – | Optional: legt beim allerersten Start automatisch den Admin an (statt über die Einrichtungsseite) |
 | `OPERATOR_NAME` / `OPERATOR_CONTACT` | – | Optional: Betreiber und Kontakt auf der Seite „Rechtliches“ |
@@ -167,6 +177,15 @@ Die Webseite bietet immer die aktuelle APK an: über Banner (Android), Profilmen
 | `APP_RELEASE_REPO` | `Scobecraft/ScobeTube` | GitHub-Repo, dessen Releases (`app-v…` mit `.apk`) automatisch geholt werden. Leer = aus |
 
 > Der Signierschlüssel muss für alle Versionen gleich bleiben, sonst lehnt Android das Update ab. Bewahre ihn sicher auf.
+
+## Spotify-Konten verbinden (einmalige Einrichtung)
+
+1. Auf [developer.spotify.com](https://developer.spotify.com/dashboard) eine App anlegen (API: „Web API“).
+2. Als **Redirect URI** die Adresse eintragen, die ScobeTube unter Einstellungen → „Spotify-Konten“ anzeigt (z. B. `https://convert.example.com/api/spotify-account/callback`).
+3. Unter **User Management** die Spotify-Konten eintragen, die sich verbinden dürfen. Spotify verlangt das bei privaten Apps.
+4. Die **Client ID** in ScobeTube einfügen und speichern. Ein Client-Secret ist nicht nötig (Anmeldung per PKCE).
+
+ScobeTube darf nur lesen (Profil, Verlauf, Top-Listen). Der Zugangs-Token liegt nur auf dem Server (Datei nur für ScobeTube lesbar); „Trennen“ löscht ihn sofort.
 
 ## Cloudflare Tunnel
 

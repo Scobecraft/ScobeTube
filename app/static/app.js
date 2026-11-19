@@ -2493,8 +2493,18 @@
   }
 
   // =========================================================== start
+  async function showMissedNotifications() {
+    try {
+      const d = await api("notifications");
+      const fresh = d.notifications.filter((n) => !n.read && now() - n.ts < 3 * 86400);
+      fresh.slice(-3).forEach((n, i) => setTimeout(() => toast(`${n.title}${n.body ? " – " + n.body : ""}`, n.kind === "security" ? "error" : "info", 10000), 900 + i * 700));
+      if (fresh.length) await api("notifications/read", { method: "POST", body: { upto: d.latest } });
+    } catch { /* egal */ }
+  }
+
   function initExtras(me) {
     spotifyFab();
+    showMissedNotifications();
     if (can("admin")) { refreshReqPill(); setInterval(refreshReqPill, 120000); }
     $("#settingsBtn").addEventListener("click", () => { if (can("admin")) loadAdminExtras(); });
     const qp = new URLSearchParams(location.search);
