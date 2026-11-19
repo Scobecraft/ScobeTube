@@ -182,6 +182,8 @@ async def security(request: Request, call_next):
     else:
         user, key = users.session_user(request.cookies.get(COOKIE_NAME))
         request.state.user, request.state.session_key = user, key
+        if key:
+            users.touch_ip(key, _client_ip(request))
         public = path in PUBLIC_PATHS or path in PUBLIC_STATIC or path.startswith("/static/fonts/")
         if user or public:
             response = await call_next(request)
@@ -473,6 +475,60 @@ def _ensure_recovery(user: User) -> list[str] | None:
     plain, hashed = auth.new_recovery_codes()
     user.recovery_codes = hashed
     return plain
+
+
+# ---------------------------------------------------- angemeldete geräte
+def _session_rows(username: str, current_key: str | None = None) -> list[dict[str, Any]]:
+    rows = []
+    for key, sess in users.user_sessions(username):
+        rows.append({"id": auth.session_public_id(key), "current": key == current_key,
+                     "created": sess.created, "last_seen": sess.last_seen or sess.created, "expires": sess.expires,
+                     "ip": sess.last_ip or sess.ip, "first_ip": sess.ip, **auth.describe_agent(sess.user_agent)})
+    return rows
+
+
+def _key_for_public_id(username: str, public_id: str) -> str | None:
+    return next((k for k, _ in users.user_sessions(username) if auth.session_public_id(k) == public_id), None)
+
+
+@api.get("/auth/sessions")
+async def my_sessions(request: Request):
+    user = _user(request)
+    return {"sessions": _session_rows(user.username, request.state.session_key)}
+
+
+@api.post("/auth/sessions/revoke")
+async def revoke_my_session(request: Request):
+    user = _user(request)
+    data = await _json(request)
+    if data.get("others"):
+        users.revoke_user_sessions(user.username, except_key=request.state.session_key)
+        log.info("%s hat alle anderen Geräte abgemeldet", user.username)
+    else:
+        key = _key_for_public_id(user.username, str(data.get("id", "")))
+        if not key:
+            raise HTTPException(404, "Sitzung nicht gefunden")
+        users.revoke(key)
+        log.info("%s hat ein Gerät abgemeldet", user.username)
+    return {"sessions": _session_rows(user.username, request.state.session_key)}
+
+
+@api.get("/users/{username}/sessions")
+async def user_sessions_admin(username: str, request: Request):
+    _need(request, "admin")
+    if not users.get(username):
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    return {"sessions": _session_rows(username, request.state.session_key)}
+
+
+@api.post("/users/{username}/logout")
+async def logout_user_admin(username: str, request: Request):
+    admin = _need(request, "admin")
+    if not users.get(username):
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    users.revoke_user_sessions(username, except_key=request.state.session_key)
+    log.warning("%s hat „%s“ auf allen Geräten abgemeldet", admin.username, username)
+    return {"ok": True}
 
 
 @api.get("/auth/2fa")

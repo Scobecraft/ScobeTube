@@ -1168,3 +1168,14 @@ body.selecting .potato-fab { bottom: 92px; }
   .potato-fab .pf-emoji { font-size: 24px; }
   .toasts { bottom: 74px; }
 }
+
+/* ---------- Angemeldete Geräte ---------- */
+.sec-sub { margin: 26px 0 6px; font: 900 18px var(--display); text-transform: uppercase; letter-spacing: -.02em; }
+.dev-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.dev { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1.5px solid var(--line-soft); animation: resIn .4s var(--ease) both; }
+.dev.current { border-color: var(--accent); background: hsl(var(--accent-h) 100% 50% / .05); }
+.dev-ico { font-size: 22px; width: 30px; text-align: center; flex: none; }
+.dev-info { flex: 1; min-width: 0; }
+.dev-info b { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14.5px; }
+.dev-info small { display: block; font: 500 11.5px var(--mono); color: var(--paper-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev .online { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; }

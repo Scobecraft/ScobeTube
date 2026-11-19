@@ -1024,6 +1024,26 @@
       sec.append(el("p", "em-hint", "Kein Zwei-Faktor-Login eingerichtet."));
     }
     emergency.append(sec);
+    const devBox = el("div", "em-2fa");
+    const devHead = el("p", "em-hint", "Angemeldete Geräte: …");
+    const devActs = el("div", "row-acts");
+    const devList = el("div", "dev-list");
+    const outAll = confirmBtn("Überall abmelden", async () => {
+      try { await api(`users/${encodeURIComponent(u.username)}/logout`, { method: "POST" }); toast(`${u.username} wurde auf allen Geräten abgemeldet`, "success"); loadUserDevices(); }
+      catch (err) { toast(err.message, "error"); }
+    });
+    if (!me) devActs.append(outAll);
+    devBox.append(devHead, devList, devActs);
+    emergency.append(devBox);
+    const loadUserDevices = async () => {
+      try {
+        const { sessions } = await api(`users/${encodeURIComponent(u.username)}/sessions`);
+        devHead.textContent = sessions.length ? `Angemeldete Geräte: ${sessions.length}` : "Zurzeit auf keinem Gerät angemeldet.";
+        devList.replaceChildren(...sessions.map((d) => deviceRow(d, null)));
+        outAll.hidden = !sessions.length;
+      } catch { devHead.textContent = "Geräte konnten nicht geladen werden."; }
+    };
+    edit.addEventListener("click", () => { if (card.classList.contains("open")) loadUserDevices(); });
     if (!me) {
       const lock = el("button", "btn ghost small", u.disabled ? "Entsperren" : "Sperren"); lock.type = "button";
       lock.addEventListener("click", async () => {
@@ -1390,7 +1410,56 @@
     $("#pkInsecure").hidden = window.ScobePasskey.secure();
     $("#pkAdd").disabled = !window.ScobePasskey.available();
     try { renderSecurity(await api("auth/2fa")); } catch (err) { toast(err.message, "error"); }
+    loadDevices();
   }
+
+  // ---------------------------------------------------- angemeldete geräte
+  const ago = (t) => {
+    const s = Math.max(0, now() - t);
+    if (s < 120) return "gerade aktiv";
+    if (s < 3600) return `vor ${Math.round(s / 60)} Min.`;
+    if (s < 86400) return `vor ${Math.round(s / 3600)} Std.`;
+    return `vor ${Math.round(s / 86400)} Tagen`;
+  };
+  const devIcon = (d) => d.browser.startsWith("ScobeTube-App") ? "📲" : d.kind === "phone" ? "📱" : d.kind === "tablet" ? "📟" : "💻";
+  function deviceRow(d, onRevoke) {
+    const row = el("div", "dev" + (d.current ? " current" : ""));
+    const info = el("div", "dev-info");
+    const name = el("b", "", `${d.browser} auf ${d.system}`);
+    if (d.current) name.append(el("span", "pill on", "Dieses Gerät"));
+    else if (now() - d.last_seen < 600) { const o = el("span", "online"); o.title = "gerade aktiv"; name.append(o); }
+    info.append(name, el("small", "", `${ago(d.last_seen)} · IP ${d.ip || "?"} · angemeldet seit ${fmtDate(d.created)}`));
+    row.append(el("span", "dev-ico", devIcon(d)), info);
+    if (!d.current && onRevoke) {
+      const b = el("button", "btn ghost small", "Abmelden"); b.type = "button";
+      b.addEventListener("click", () => onRevoke(d, b));
+      row.append(b);
+    }
+    return row;
+  }
+  function renderDevices(list) {
+    $("#devPill").textContent = String(list.length);
+    $("#devOthers").disabled = list.length < 2;
+    $("#devList").replaceChildren(...list.map((d, i) => {
+      const r = deviceRow(d, async (dev, btn) => {
+        btn.classList.add("busy");
+        try { renderDevices((await api("auth/sessions/revoke", { method: "POST", body: { id: dev.id } })).sessions); toast("Gerät abgemeldet", "success"); }
+        catch (err) { toast(err.message, "error"); btn.classList.remove("busy"); }
+      });
+      r.style.animationDelay = `${i * 40}ms`;
+      return r;
+    }));
+  }
+  async function loadDevices() {
+    try { renderDevices((await api("auth/sessions")).sessions); } catch (err) { $("#devList").textContent = err.message; }
+  }
+  $("#devOthers").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    if (!b.classList.contains("confirm")) { b.classList.add("confirm"); b.textContent = "Wirklich alle anderen?"; setTimeout(() => { b.classList.remove("confirm"); b.textContent = "Alle anderen abmelden"; }, 3500); return; }
+    b.classList.remove("confirm"); b.textContent = "Alle anderen abmelden";
+    try { renderDevices((await api("auth/sessions/revoke", { method: "POST", body: { others: true } })).sessions); toast("Alle anderen Geräte abgemeldet", "success"); }
+    catch (err) { toast(err.message, "error"); }
+  });
   $("#menuSecurity").addEventListener("click", openSecurity);
   $("#totpStart").addEventListener("click", async () => {
     try {

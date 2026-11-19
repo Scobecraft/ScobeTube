@@ -134,6 +134,51 @@ class Session:
     created: float = field(default_factory=time.time)
     ip: str = ""
     user_agent: str = ""
+    last_seen: float = 0.0
+    last_ip: str = ""
+
+
+def session_public_id(key: str) -> str:
+    """Öffentliche Kennung einer Sitzung – verrät weder Token noch dessen Hash."""
+    return hashlib.sha256(("sid:" + key).encode()).hexdigest()[:16]
+
+
+def describe_agent(ua: str) -> dict[str, str]:
+    """Grobe, verständliche Geräteangabe aus dem User-Agent (keine Ortung, nichts Genaueres)."""
+    ua = ua or ""
+    if "ScobeTubeApp/" in ua:
+        browser = "ScobeTube-App " + ua.split("ScobeTubeApp/")[1].split()[0]
+    elif "Edg/" in ua:
+        browser = "Edge"
+    elif "OPR/" in ua or "Opera" in ua:
+        browser = "Opera"
+    elif "SamsungBrowser" in ua:
+        browser = "Samsung Internet"
+    elif "Firefox/" in ua:
+        browser = "Firefox"
+    elif "Chrome/" in ua or "CriOS" in ua:
+        browser = "Chrome"
+    elif "Safari/" in ua:
+        browser = "Safari"
+    else:
+        browser = "Unbekannter Browser"
+    if "Android" in ua:
+        system, kind = "Android", "phone"
+    elif "iPhone" in ua or "iPod" in ua:
+        system, kind = "iPhone", "phone"
+    elif "iPad" in ua:
+        system, kind = "iPad", "tablet"
+    elif "Windows" in ua:
+        system, kind = "Windows", "desktop"
+    elif "Mac OS X" in ua or "Macintosh" in ua:
+        system, kind = "macOS", "desktop"
+    elif "CrOS" in ua:
+        system, kind = "ChromeOS", "desktop"
+    elif "Linux" in ua:
+        system, kind = "Linux", "desktop"
+    else:
+        system, kind = "Unbekanntes System", "desktop"
+    return {"browser": browser, "system": system, "kind": kind}
 
 
 def _token_hash(token: str) -> str:
@@ -282,7 +327,25 @@ class UserStore:
         user = self.get(s.username)
         if not user or user.disabled:
             return None, None
+        now = time.time()
+        if now - s.last_seen > 300:   # „zuletzt aktiv“ höchstens alle 5 Minuten speichern
+            s.last_seen = now
+            try:
+                self.save()
+            except OSError:
+                pass
         return user, key
+
+    def touch_ip(self, key: str, ip: str) -> None:
+        s = self.sessions.get(key)
+        if s and ip and s.last_ip != ip:
+            s.last_ip = ip
+
+    def user_sessions(self, username: str) -> list[tuple[str, Session]]:
+        now = time.time()
+        return sorted(((k, s) for k, s in self.sessions.items()
+                       if s.username.lower() == username.lower() and s.expires > now),
+                      key=lambda kv: kv[1].last_seen or kv[1].created, reverse=True)
 
     def revoke(self, key: str) -> None:
         with self.lock:
