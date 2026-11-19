@@ -36,9 +36,16 @@
           </button>
           <div class="user-menu box" id="userMenu" role="menu" hidden>
             <div class="who"><span class="label" id="userRole">Benutzer</span><b id="userMenuName"></b>
-              <div class="my-stats" id="myStats"></div></div>
-            <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte</button>
+              <div class="my-stats" id="myStats"></div>
+              <div class="quota-box" id="quotaBox" hidden>
+                <div class="quota-top"><span class="label">Speicher</span><span class="mono" id="quotaText"></span></div>
+                <div class="quota-bar"><span id="quotaFill"></span></div>
+                <button type="button" class="quota-ask" id="quotaAsk">Mehr Speicher anfordern</button>
+              </div></div>
+            <button id="menuUsers" hidden><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/></svg>Benutzer &amp; Rechte <span class="pill hot" id="reqPill" hidden></span></button>
             <button id="menuSecurity"><svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg>Sicherheit &amp; Geräte <span class="pill" id="menu2fa">aus</span></button>
+            <button id="menuHistory"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>Verlauf</button>
+            <button id="menuAudit" hidden><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5z"/><path d="M9 10h6M9 14h6M9 18h4"/></svg>Aktivitätsprotokoll</button>
             <a class="menu-link" id="menuApp" href="app/download" hidden><svg viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19"/><path d="M11 18.5h2"/></svg>Android-App laden <span class="pill" id="menuAppVer"></span></a>
             <button id="menuAppUpdate" hidden><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>Nach App-Update suchen</button>
             <button id="menuServer" hidden><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>Server wechseln</button>
@@ -96,6 +103,7 @@
             <svg class="lead" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             <textarea id="url" rows="1" spellcheck="false"></textarea>
             <span class="mode-hint" id="modeHint">Link</span>
+            <button type="button" class="paste rec-open" id="recOpen" title="Song erkennen (Mikrofon oder Datei)" aria-label="Song erkennen"><svg viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="2.5" y="13.5" width="4.5" height="7"/><rect x="17" y="13.5" width="4.5" height="7"/></svg></button>
             <button type="button" class="paste" id="pasteBtn">Einfügen</button>
           </div>
           <button type="submit" class="go" id="goBtn"><span class="go-text" id="goText">Laden</span><svg viewBox="0 0 24 24" id="goIcon"><path d="M12 4v13m0 0-5-5m5 5 5-5M5 21h14"/></svg></button>
@@ -269,6 +277,31 @@
         </div>
       </div>
 
+      <div class="section lib-sec" id="secRecognize" hidden>
+        <div class="txt"><h4>🎧 Song-Erkennung <span class="pill" id="recPill">an</span></h4>
+          <p>Erkennt Songs aus einer kurzen Mikrofon-Aufnahme oder Datei über <b>AudD</b> (audd.io). Ohne API-Schlüssel klappt das nur ein paar Mal am Tag; mit eigenem Schlüssel (audd.io → Dashboard) entsprechend öfter. An AudD geht nur der 12-Sekunden-Ausschnitt.</p>
+          <div class="lib-grid">
+            <label class="toggle"><input type="checkbox" id="recEnabled"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Song-Erkennung erlauben</label>
+            <label class="field"><span class="label">AudD-API-Schlüssel (optional)</span><input class="input mono" id="recToken" type="password" autocomplete="new-password"></label>
+          </div>
+        </div>
+        <div class="acts"><button class="btn small" id="recSave"><span>Speichern</span></button><button class="btn ghost small" id="recClear" hidden><span>Schlüssel entfernen</span></button></div>
+      </div>
+
+      <div class="section lib-sec" id="secSpotifyApp" hidden>
+        <div class="txt"><h4>🟢 Spotify-Konten <span class="pill" id="spAppPill">aus</span></h4>
+          <p>Damit sich Benutzer mit Spotify verbinden können (Verlauf, Top-Songs, Hörprofil), brauchst du einmalig eine eigene Spotify-App:</p>
+          <ol class="steps">
+            <li><b>developer.spotify.com</b> → Dashboard → <b>Create app</b> (API: „Web API“).</li>
+            <li>Als <b>Redirect URI</b> genau diese Adresse eintragen: <code class="secret" id="spRedirect"></code></li>
+            <li>Unter <b>User Management</b> die Spotify-Konten eintragen, die sich verbinden dürfen (Spotify-Vorgabe für private Apps).</li>
+            <li>Die <b>Client ID</b> hier einfügen. Ein Client-Secret ist nicht nötig.</li>
+          </ol>
+          <label class="field"><span class="label">Client ID</span><input class="input mono" id="spClientId" maxlength="32" autocomplete="off" spellcheck="false" placeholder="32 Zeichen"></label>
+        </div>
+        <div class="acts"><button class="btn small" id="spAppSave"><span>Speichern</span></button><button class="btn ghost small" id="spCopy"><span>Redirect URI kopieren</span></button></div>
+      </div>
+
       <div class="section" id="secCookies" hidden>
         <div class="txt"><h4>Cookies <span class="pill" id="cookiePill">keine</span></h4><p>Bei „Sign in to confirm you're not a bot“ oder altersbeschränkten Videos: <code>cookies.txt</code> aus dem Browser exportieren und hochladen.</p></div>
         <div class="acts">
@@ -318,6 +351,7 @@
     <div class="modal-card wide" role="dialog" aria-labelledby="usersTitle">
       <div class="modal-head"><h2 id="usersTitle">Benutzer &amp; Rechte</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
       <div class="totals" id="usersTotals"></div>
+      <div class="req-list" id="quotaRequests" hidden></div>
       <div class="users" id="usersList"></div>
       <form class="new-user form" id="newUserForm" autocomplete="off">
         <h4>+ Neues Konto</h4>
@@ -469,6 +503,90 @@
     <button class="btn ghost small" id="selAll">Alle fertigen</button>
     <button class="btn accent small" id="selZip"><svg viewBox="0 0 24 24"><path d="M12 4v12m0 0-5-5m5 5 5-5M5 20h14"/></svg>Als ZIP laden</button>
     <button class="btn ghost small" id="selDone">Fertig</button>
+  </div>
+
+  <!-- Verlauf -->
+  <div class="modal" id="historyModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card wide" role="dialog" aria-labelledby="histTitle">
+      <div class="modal-head"><h2 id="histTitle">Verlauf</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <p class="sec-intro">Alles, was du geladen hast – auch wenn die Datei längst automatisch gelöscht wurde. Mit ⟳ lädst du einen Eintrag erneut.</p>
+      <div class="hist-bar">
+        <input class="input" id="histSearch" placeholder="Im Verlauf suchen …" autocomplete="off">
+        <div class="chips" id="histKind"><button type="button" class="chip active" data-v="">Alle</button><button type="button" class="chip" data-v="video">Video</button><button type="button" class="chip" data-v="audio">Audio</button></div>
+      </div>
+      <div class="hist-list" id="histList"></div>
+      <button class="btn ghost small hist-more" id="histMore" hidden>Mehr laden</button>
+      <div class="hist-foot">
+        <label class="toggle"><input type="checkbox" id="histEnabled"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Verlauf aufzeichnen</label>
+        <span class="label" id="histCount"></span>
+        <button class="btn danger small" id="histClear"><span>Verlauf löschen</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mehr Speicher anfordern -->
+  <div class="modal" id="quotaModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card" role="dialog" aria-labelledby="quotaTitle">
+      <div class="modal-head"><h2 id="quotaTitle">Mehr Speicher</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="quota-big"><div class="ring" id="quotaRing"><b id="quotaPct">0%</b></div><div><b id="quotaBig"></b><p class="legal-small" id="quotaSub"></p></div></div>
+      <div id="quotaPending" class="warn-box" hidden></div>
+      <form id="quotaForm" class="stack">
+        <span class="label">Wie viel insgesamt?</span>
+        <div class="chips" id="quotaChips"><button type="button" class="chip" data-gb="20">20 GB</button><button type="button" class="chip active" data-gb="25">25 GB</button><button type="button" class="chip" data-gb="50">50 GB</button><button type="button" class="chip" data-gb="100">100 GB</button></div>
+        <label class="field"><span class="label">Wofür? (optional)</span><input class="input" id="quotaReason" maxlength="300" placeholder="z. B. Hörbücher, Konzert-Mitschnitte …"></label>
+        <button class="btn accent" type="submit" id="quotaSend"><span>Anfrage an die Admins senden</span></button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Aktivitätsprotokoll -->
+  <div class="modal" id="auditModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card wide" role="dialog" aria-labelledby="auditTitle">
+      <div class="modal-head"><h2 id="auditTitle">Aktivitäten</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="hist-bar audit-bar">
+        <input class="input" id="auditSearch" placeholder="Suchen (Aktion, IP, Titel …)" autocomplete="off">
+        <select class="input" id="auditUser"><option value="">Alle Benutzer</option></select>
+      </div>
+      <div class="chips" id="auditCats"></div>
+      <div class="audit-list" id="auditList"></div>
+      <button class="btn ghost small hist-more" id="auditMore" hidden>Ältere laden</button>
+      <div class="hist-foot">
+        <span class="label">Aufbewahren</span>
+        <select class="input small-sel" id="auditDays"></select>
+        <span class="label" id="auditCount"></span>
+        <button class="btn danger small" id="auditClear"><span>Protokoll leeren</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Song erkennen -->
+  <div class="modal" id="recModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card rec-card" role="dialog" aria-labelledby="recTitle">
+      <div class="modal-head"><h2 id="recTitle">Song erkennen</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div class="rec-stage" id="recStage">
+        <button type="button" class="rec-mic" id="recMic" aria-label="Aufnahme starten">
+          <span class="rec-waves"><i></i><i></i><i></i></span>
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM18.5 11v1a6.5 6.5 0 0 1-13 0v-1M12 18.5V21"/></svg>
+          <svg class="rec-prog" viewBox="0 0 100 100"><circle cx="50" cy="50" r="47"/></svg>
+        </button>
+        <p class="rec-status" id="recStatus">Tippen und das Handy 10 Sekunden zur Musik halten</p>
+        <label class="btn ghost small"><input type="file" id="recFile" accept="audio/*,video/*" hidden><span>… oder Audio-/Videodatei wählen</span></label>
+      </div>
+      <div class="rec-result" id="recResult" hidden></div>
+    </div>
+  </div>
+
+  <!-- Spotify -->
+  <div class="modal" id="spModal" aria-hidden="true">
+    <div class="modal-bg" data-close></div>
+    <div class="modal-card wide sp-card" role="dialog" aria-labelledby="spTitle">
+      <div class="modal-head"><h2 id="spTitle">Mein Spotify</h2><button class="icon-btn" data-close aria-label="Schließen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+      <div id="spBody"></div>
+    </div>
   </div>
 
   <!-- Player -->

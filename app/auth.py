@@ -103,6 +103,7 @@ class User:
     totp_last_step: int = 0
     recovery_codes: list[str] = field(default_factory=list)   # sha256-Hashes
     passkeys: list[dict[str, Any]] = field(default_factory=list)
+    quota_gb: float | None = None   # Speicher-Kontingent; None = Standard, 0 = unbegrenzt
 
     @property
     def twofa(self) -> bool:
@@ -124,7 +125,7 @@ class User:
         return {"username": self.username, "permissions": self.permissions, "disabled": self.disabled,
                 "created": self.created, "last_login": self.last_login, "admin": self.is_admin,
                 "twofa": self.twofa, "totp": bool(self.totp_secret), "passkeys": len(self.passkeys),
-                "recovery_left": len(self.recovery_codes)}
+                "recovery_left": len(self.recovery_codes), "quota_gb": self.quota_gb}
 
 
 @dataclass

@@ -159,7 +159,8 @@ class Item:
 class Manager:
     def __init__(self) -> None:
         self.items: dict[str, Item] = {}
-        self.on_done = None   # wird nach jedem fertigen Download aufgerufen (Mediathek)
+        self.on_done = None   # wird nach jedem fertigen Download aufgerufen (Mediathek, Verlauf)
+        self.quota_check = None   # (owner) → Fehlermeldung, falls das Speicher-Kontingent voll ist
         self.lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT, thread_name_prefix="dl")
         self.resolver = ThreadPoolExecutor(max_workers=4, thread_name_prefix="resolve")
@@ -512,6 +513,15 @@ class Manager:
         # Veraltete Aufträge (abgebrochen / neu eingereiht) überspringen
         if item.status != "queued" or flag.is_set() or self.cancel_flags.get(item.id) is not flag:
             return
+        if self.quota_check and item.owner:
+            full = self.quota_check(item.owner)
+            if full:
+                item.status = "error"
+                item.error = full
+                item.finished = time.time()
+                self.cancel_flags.pop(item.id, None)
+                self._update(item)
+                return
         item.status = "downloading"
         self._update(item)
         tmp = self.tmp_dir / item.id

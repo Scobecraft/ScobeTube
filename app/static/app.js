@@ -728,6 +728,11 @@
     });
     es.addEventListener("removed", (e) => removeItem(JSON.parse(e.data).id));
     es.addEventListener("logout", () => { es.close(); location.href = "login"; });
+    es.addEventListener("notify", (e) => {
+      const n = JSON.parse(e.data);
+      toast(`${n.title}${n.body ? " – " + n.body : ""}`, n.kind === "security" ? "error" : "info", 9000);
+      if (n.kind === "quota") { refreshReqPill(); if ($("#usersModal").classList.contains("open")) loadUsers(); }
+    });
     es.onerror = async () => {
       conn.className = "conn bad";
       try { const s = await fetch("api/auth/status").then((r) => r.json()); if (!s.user) location.href = "login"; } catch { /* offline */ }
@@ -930,6 +935,7 @@
       const me = (await api("auth/me")).user, u = me.usage;
       $("#myStats").replaceChildren(statBox(String(u.downloads), "Downloads"), statBox(fmtBytes(u.bytes_total) || "0 B", "Geladen"),
         statBox(String(u.files_now), "Dateien jetzt"), statBox(fmtBytes(u.bytes_now) || "0 B", "Belegt"));
+      renderQuota(me.quota);
     } catch { /* egal */ }
   });
   $("#menuLogout").addEventListener("click", async () => { try { await api("auth/logout", { method: "POST" }); } finally { location.href = "login"; } });
@@ -985,6 +991,7 @@
     try {
       const data = await api("users");
       state.permLabels = data.permissions;
+      loadQuotaRequests();
       const maxNow = Math.max(1, ...data.users.map((u) => u.usage.bytes_now));
       box.replaceChildren(...data.users.map((u, i) => userCard(u, i, maxNow)));
       const sum = (k) => data.users.reduce((a, u) => a + (u.usage[k] || 0), 0) + (data.deleted_users[k] || 0);
@@ -1126,6 +1133,20 @@
 
     }
     panel.appendChild(row);
+    if (!u.admin) {
+      const qRow = el("div", "row-acts quota-row");
+      const qIn = el("input", "input"); qIn.type = "number"; qIn.min = "0"; qIn.step = "1"; qIn.inputMode = "decimal";
+      qIn.placeholder = `Standard (${state.quotaDefault ?? 10} GB)`; qIn.value = u.quota_gb ?? "";
+      const qBtn = el("button", "btn ghost small", "Speicher setzen"); qBtn.type = "button";
+      qBtn.addEventListener("click", async () => {
+        try {
+          await api(`users/${encodeURIComponent(u.username)}`, { method: "PATCH", body: { quota_gb: qIn.value === "" ? null : Number(qIn.value) } });
+          toast(qIn.value === "" ? `${u.username}: Standard-Kontingent` : Number(qIn.value) === 0 ? `${u.username}: unbegrenzter Speicher` : `${u.username}: ${qIn.value} GB`, "success"); loadUsers();
+        } catch (err) { toast(err.message, "error"); }
+      });
+      qRow.append(el("span", "label", "Speicher (GB, 0 = unbegrenzt)"), qIn, qBtn);
+      panel.appendChild(qRow);
+    }
     panel.appendChild(emergency);
     card.append(top, stats, panel);
     return card;
@@ -1940,6 +1961,554 @@
   window.ScobeFx = fx;
 
   // --------------------------------------------------------------- start
+
+  // =========================================================== speicher-kontingent
+  function renderQuota(q) {
+    const box = $("#quotaBox");
+    if (!q || q.limit == null) { box.hidden = true; return; }
+    box.hidden = false;
+    const pct = Math.min(100, q.used / q.limit * 100);
+    $("#quotaText").textContent = `${fmtBytes(q.used) || "0 B"} / ${fmtBytes(q.limit)}`;
+    $("#quotaFill").style.width = pct + "%";
+    box.classList.toggle("warn", pct >= 80); box.classList.toggle("full", !!q.full);
+    $("#quotaAsk").textContent = q.pending ? `⏳ Anfrage über ${q.pending.gb} GB offen` : "Mehr Speicher anfordern";
+    state.quota = q;
+  }
+  $("#quotaAsk").addEventListener("click", async () => {
+    let q = state.quota;
+    try { q = await api("quota"); } catch { /* egal */ }
+    const pct = Math.min(100, Math.round(q.used / q.limit * 100));
+    $("#quotaRing").style.setProperty("--p", pct);
+    $("#quotaPct").textContent = pct + "%";
+    $("#quotaBig").textContent = `${fmtBytes(q.used) || "0 B"} von ${fmtBytes(q.limit)} belegt`;
+    $("#quotaSub").textContent = q.custom ? "Dein Kontingent wurde vom Admin festgelegt." : `Standard-Kontingent für alle: ${q.default_gb} GB`;
+    const pend = $("#quotaPending");
+    pend.hidden = !q.pending; $("#quotaForm").hidden = !!q.pending;
+    if (q.pending) {
+      pend.replaceChildren(el("span", "", `⏳ Deine Anfrage über ${q.pending.gb} GB vom ${fmtDate(q.pending.created)} wartet auf einen Admin. `));
+      const c = el("button", "btn ghost small", "Zurückziehen"); c.type = "button";
+      c.addEventListener("click", async () => { try { await api("quota/request/cancel", { method: "POST" }); toast("Anfrage zurückgezogen"); closeModal($("#quotaModal")); renderQuota(await api("quota")); } catch (err) { toast(err.message, "error"); } });
+      pend.append(c);
+    }
+    const cur = q.limit / 1024 ** 3;
+    $$("#quotaChips .chip").forEach((c) => { c.hidden = Number(c.dataset.gb) <= cur; });
+    const first = $$("#quotaChips .chip").find((c) => !c.hidden);
+    $$("#quotaChips .chip").forEach((c) => c.classList.toggle("active", c === first));
+    openModal("quotaModal");
+  });
+  $("#quotaChips").addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; $$("#quotaChips .chip").forEach((x) => x.classList.toggle("active", x === c)); });
+  $("#quotaForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const c = $("#quotaChips .chip.active"); if (!c) return toast("Bitte eine Größe wählen", "error");
+    const b = $("#quotaSend"); b.classList.add("busy");
+    try {
+      await api("quota/request", { method: "POST", body: { gb: Number(c.dataset.gb), reason: $("#quotaReason").value } });
+      toast("Anfrage gesendet – die Admins bekommen eine Nachricht", "success");
+      closeModal($("#quotaModal")); $("#quotaReason").value = "";
+      renderQuota(await api("quota"));
+    } catch (err) { toast(err.message, "error"); }
+    b.classList.remove("busy");
+  });
+
+  async function refreshReqPill() {
+    if (!can("admin")) return;
+    try {
+      const { requests } = await api("quota/requests");
+      const n = requests.filter((r) => r.status === "pending").length;
+      $("#reqPill").hidden = !n; $("#reqPill").textContent = String(n);
+      $("#userBtn").classList.toggle("has-badge", n > 0);
+    } catch { /* egal */ }
+  }
+  async function loadQuotaRequests() {
+    const box = $("#quotaRequests");
+    try {
+      const { requests, default_gb } = await api("quota/requests");
+      state.quotaDefault = default_gb;
+      const open = requests.filter((r) => r.status === "pending");
+      box.hidden = !open.length;
+      $("#reqPill").hidden = !open.length; $("#reqPill").textContent = String(open.length);
+      $("#userBtn").classList.toggle("has-badge", open.length > 0);
+      box.replaceChildren(el("h3", "sec-sub", `💾 Speicher-Anfragen (${open.length})`), ...open.map((r, i) => {
+        const row = el("div", "req"); row.style.setProperty("--i", i);
+        const info = el("div", "req-info");
+        info.append(el("b", "", `${r.user} möchte ${r.gb} GB`),
+          el("small", "", `belegt ${fmtBytes(r.used) || "0 B"} von ${r.limit ? fmtBytes(r.limit) : "∞"} · ${fmtDate(r.created)}`));
+        if (r.reason) info.append(el("p", "", `„${r.reason}“`));
+        const gb = el("input", "input"); gb.type = "number"; gb.min = "1"; gb.value = r.gb; gb.title = "Genehmigte Größe in GB";
+        const yes = el("button", "btn accent small", "Genehmigen"); yes.type = "button";
+        const no = el("button", "btn ghost small", "Ablehnen"); no.type = "button";
+        const decide = async (approve, btn) => {
+          btn.classList.add("busy");
+          try { await api(`quota/requests/${r.id}`, { method: "POST", body: { approve, gb: Number(gb.value) } }); toast(approve ? `${r.user} hat jetzt ${gb.value} GB` : "Anfrage abgelehnt", "success"); loadUsers(); }
+          catch (err) { toast(err.message, "error"); btn.classList.remove("busy"); }
+        };
+        yes.addEventListener("click", () => decide(true, yes)); no.addEventListener("click", () => decide(false, no));
+        const acts = el("div", "req-acts"); acts.append(gb, el("span", "label", "GB"), yes, no);
+        row.append(info, acts);
+        return row;
+      }));
+    } catch { box.hidden = true; }
+  }
+
+  // =========================================================== verlauf
+  const hist = { q: "", kind: "", offset: 0, timer: null };
+  const srcIcon = (src) => ({ youtube: "▶", soundcloud: "☁", spotify: "●", tidal: "◆" }[src] || "↓");
+  function histRow(e, i) {
+    const row = el("div", "hist"); row.style.setProperty("--i", i % 20);
+    const img = el("div", "hist-img");
+    if (e.thumbnail) { const im = el("img"); im.src = e.thumbnail; im.alt = ""; im.loading = "lazy"; im.referrerPolicy = "no-referrer"; img.append(im); }
+    else img.textContent = e.kind === "audio" ? "♫" : "▶";
+    const info = el("div", "hist-info");
+    info.append(el("b", "", e.title || e.url),
+      el("small", "", `${srcIcon(e.source)} ${[e.artist || e.uploader, (e.format || "").toUpperCase(), e.filesize ? fmtBytes(e.filesize) : "", fmtDate(e.ts)].filter(Boolean).join(" · ")}`));
+    const acts = el("div", "hist-acts");
+    const open = el("a", "icon-btn small", "↗"); open.href = e.url; open.target = "_blank"; open.rel = "noopener noreferrer"; open.title = "Original öffnen";
+    const again = el("button", "icon-btn small", "⟳"); again.type = "button"; again.title = "Erneut laden"; again.hidden = !can("download");
+    again.addEventListener("click", async () => {
+      again.classList.add("spin");
+      try { await api(`history/${e.id}/again`, { method: "POST" }); toast("Wird erneut geladen", "success"); }
+      catch (err) { toast(err.message, "error"); }
+      again.classList.remove("spin");
+    });
+    const del = el("button", "icon-btn small", "✕"); del.type = "button"; del.title = "Aus dem Verlauf löschen";
+    del.addEventListener("click", async () => {
+      try { await api(`history/${e.id}`, { method: "DELETE" }); row.classList.add("gone"); setTimeout(() => row.remove(), 300); }
+      catch (err) { toast(err.message, "error"); }
+    });
+    acts.append(open, again, del);
+    row.append(img, info, acts);
+    return row;
+  }
+  async function loadHistory(more) {
+    if (!more) hist.offset = 0;
+    try {
+      const d = await api(`history?${new URLSearchParams({ q: hist.q, kind: hist.kind, offset: hist.offset })}`);
+      const rows = d.entries.map((e, i) => histRow(e, i));
+      if (more) $("#histList").append(...rows);
+      else $("#histList").replaceChildren(...(rows.length ? rows : [el("p", "empty-note", hist.q ? "Nichts gefunden." : d.enabled ? "Noch nichts im Verlauf." : "Der Verlauf ist ausgeschaltet.")]));
+      hist.offset += d.entries.length;
+      $("#histMore").hidden = !d.more;
+      $("#histEnabled").checked = d.enabled;
+      $("#histCount").textContent = `${d.total} Eintr${d.total === 1 ? "ag" : "äge"}`;
+    } catch (err) { toast(err.message, "error"); }
+  }
+  $("#menuHistory").addEventListener("click", () => { openModal("historyModal"); loadHistory(); });
+  $("#histMore").addEventListener("click", () => loadHistory(true));
+  $("#histSearch").addEventListener("input", () => { clearTimeout(hist.timer); hist.timer = setTimeout(() => { hist.q = $("#histSearch").value.trim(); loadHistory(); }, 250); });
+  $("#histKind").addEventListener("click", (e) => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    $$("#histKind .chip").forEach((x) => x.classList.toggle("active", x === c)); hist.kind = c.dataset.v; loadHistory();
+  });
+  $("#histEnabled").addEventListener("change", async () => {
+    try { await api("history/settings", { method: "POST", body: { enabled: $("#histEnabled").checked } }); toast($("#histEnabled").checked ? "Verlauf wird aufgezeichnet" : "Verlauf ausgeschaltet – es wird nichts mehr gespeichert"); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#histClear").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    if (!b.classList.contains("confirm")) { b.classList.add("confirm"); b.firstElementChild.textContent = "Wirklich alles löschen?"; setTimeout(() => { b.classList.remove("confirm"); b.firstElementChild.textContent = "Verlauf löschen"; }, 3500); return; }
+    b.classList.remove("confirm"); b.firstElementChild.textContent = "Verlauf löschen";
+    try { const r = await api("history/clear", { method: "POST" }); toast(`${r.removed} Einträge gelöscht`, "success"); loadHistory(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+
+  // =========================================================== aktivitätsprotokoll
+  const aud = { cat: "", user: "", q: "", before: "", timer: null, init: false };
+  const CAT_ICON = { login: "🔓", login_failed: "⛔", download: "⬇", file: "🗂", security: "🛡", admin: "⚙", quota: "💾" };
+  function auditRow(e) {
+    const row = el("div", "aud cat-" + e.cat);
+    const when = new Date(e.ts * 1000);
+    row.append(el("span", "aud-ico", CAT_ICON[e.cat] || "•"),
+      el("span", "aud-time mono", when.toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })));
+    const main = el("div", "aud-main");
+    const head = el("b", "", e.action);
+    if (e.target) head.append(el("span", "pill", "→ " + e.target));
+    main.append(head);
+    const meta = [e.user ? "👤 " + e.user : "anonym", e.ip ? "IP " + e.ip : "", e.detail || ""].filter(Boolean).join(" · ");
+    main.append(el("small", "", meta));
+    row.append(main);
+    return row;
+  }
+  async function loadAudit(more) {
+    if (!more) aud.before = "";
+    try {
+      const d = await api(`audit?${new URLSearchParams({ cat: aud.cat, user: aud.user, q: aud.q, before: aud.before })}`);
+      if (!aud.init) {
+        aud.init = true;
+        $("#auditCats").replaceChildren(...[["", "Alle"], ...Object.entries(d.categories)].map(([k, v]) => {
+          const c = el("button", "chip" + (k === "" ? " active" : ""), (CAT_ICON[k] ? CAT_ICON[k] + " " : "") + v); c.type = "button"; c.dataset.v = k; return c;
+        }));
+        $("#auditDays").replaceChildren(...d.choices.map((n) => { const o = el("option", "", `${n} Tage`); o.value = n; return o; }));
+      }
+      $("#auditDays").value = d.days;
+      const rows = d.entries.map(auditRow);
+      if (more) $("#auditList").append(...rows);
+      else $("#auditList").replaceChildren(...(rows.length ? rows : [el("p", "empty-note", "Keine Einträge.")]));
+      if (d.entries.length) aud.before = d.entries[d.entries.length - 1].id;
+      $("#auditMore").hidden = !d.more;
+      $("#auditCount").textContent = `${d.total} Einträge gespeichert`;
+    } catch (err) { toast(err.message, "error"); }
+  }
+  $("#menuAudit").addEventListener("click", async () => {
+    openModal("auditModal");
+    try {
+      const { users: list } = await api("users");
+      const sel = $("#auditUser"), cur = sel.value;
+      sel.replaceChildren(el("option", "", "Alle Benutzer"), ...list.map((u) => { const o = el("option", "", u.username); o.value = u.username; return o; }));
+      sel.firstElementChild.value = ""; sel.value = cur;
+    } catch { /* egal */ }
+    loadAudit();
+  });
+  $("#auditCats").addEventListener("click", (e) => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    $$("#auditCats .chip").forEach((x) => x.classList.toggle("active", x === c)); aud.cat = c.dataset.v; loadAudit();
+  });
+  $("#auditUser").addEventListener("change", () => { aud.user = $("#auditUser").value; loadAudit(); });
+  $("#auditSearch").addEventListener("input", () => { clearTimeout(aud.timer); aud.timer = setTimeout(() => { aud.q = $("#auditSearch").value.trim(); loadAudit(); }, 250); });
+  $("#auditMore").addEventListener("click", () => loadAudit(true));
+  $("#auditDays").addEventListener("change", async () => {
+    try { const r = await api("audit/settings", { method: "POST", body: { days: Number($("#auditDays").value) } }); toast(`Einträge werden ${r.days} Tage aufbewahrt`, "success"); loadAudit(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#auditClear").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    if (!b.classList.contains("confirm")) { b.classList.add("confirm"); b.firstElementChild.textContent = "Wirklich leeren?"; setTimeout(() => { b.classList.remove("confirm"); b.firstElementChild.textContent = "Protokoll leeren"; }, 3500); return; }
+    b.classList.remove("confirm"); b.firstElementChild.textContent = "Protokoll leeren";
+    try { await api("audit/clear", { method: "POST" }); toast("Protokoll geleert", "success"); loadAudit(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+
+  // =========================================================== song erkennen
+  const rec = { stream: null, recorder: null, chunks: [], timer: null, actx: null, raf: null, busy: false };
+  const REC_SECONDS = 10;
+  function recStatus(t) { $("#recStatus").textContent = t; }
+  function recStopStream() {
+    if (rec.stream) rec.stream.getTracks().forEach((t) => t.stop());
+    rec.stream = null; cancelAnimationFrame(rec.raf);
+    if (rec.actx) { rec.actx.close().catch(() => {}); rec.actx = null; }
+    clearTimeout(rec.timer);
+    $("#recMic").classList.remove("recording"); $("#recMic").style.removeProperty("--lvl");
+  }
+  async function recSend(blob, name) {
+    rec.busy = true;
+    $("#recMic").classList.add("thinking"); recStatus("Erkenne …");
+    const fd = new FormData(); fd.append("file", blob, name);
+    try { showRecResult(await api("recognize", { method: "POST", body: fd })); }
+    catch (err) { recStatus(err.message); toast(err.message, "error", 6000); }
+    $("#recMic").classList.remove("thinking"); rec.busy = false;
+  }
+  async function recStart() {
+    if (rec.busy) return;
+    if (rec.recorder && rec.recorder.state === "recording") { rec.recorder.stop(); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { recStatus(isHttps() ? "Dein Browser kann nicht aufnehmen – wähle eine Datei." : "Mikrofon geht nur über HTTPS – wähle eine Datei."); return; }
+    $("#recResult").hidden = true;
+    try { rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }); }
+    catch { recStatus("Kein Zugriff aufs Mikrofon – bitte erlauben oder eine Datei wählen."); return; }
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+    rec.chunks = [];
+    rec.recorder = new MediaRecorder(rec.stream, mime ? { mimeType: mime } : undefined);
+    rec.recorder.ondataavailable = (e) => { if (e.data.size) rec.chunks.push(e.data); };
+    rec.recorder.onstop = () => {
+      const type = rec.recorder.mimeType || mime || "audio/webm";
+      recStopStream();
+      recSend(new Blob(rec.chunks, { type }), "aufnahme." + (type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm"));
+    };
+    rec.recorder.start(500);
+    const mic = $("#recMic"); mic.classList.add("recording"); mic.style.setProperty("--dur", REC_SECONDS + "s");
+    const t0 = Date.now();
+    try {   // Pegel für die Animation
+      rec.actx = new (window.AudioContext || window.webkitAudioContext)();
+      const an = rec.actx.createAnalyser(); an.fftSize = 256;
+      rec.actx.createMediaStreamSource(rec.stream).connect(an);
+      const buf = new Uint8Array(an.frequencyBinCount);
+      const tick = () => {
+        an.getByteTimeDomainData(buf);
+        let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+        mic.style.setProperty("--lvl", Math.min(1, peak / 64).toFixed(2));
+        recStatus(`Hört zu … ${Math.max(0, REC_SECONDS - Math.floor((Date.now() - t0) / 1000))} s`);
+        rec.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch { recStatus("Hört zu …"); }
+    rec.timer = setTimeout(() => { if (rec.recorder?.state === "recording") rec.recorder.stop(); }, REC_SECONDS * 1000);
+  }
+  function showRecResult(r) {
+    const box = $("#recResult"); box.hidden = false;
+    if (!r.found) {
+      recStatus("Nicht erkannt – näher an die Musik und nochmal?");
+      box.replaceChildren(el("p", "empty-note", "🤷 Diesen Song kenne ich leider nicht."));
+      return;
+    }
+    recStatus("Erkannt!");
+    if (!motion.reduced) { const m = $("#recMic").getBoundingClientRect(); fx(m.left + m.width / 2, m.top + m.height / 2, 40); }
+    const card = el("div", "rec-hit");
+    const cover = el("div", "rec-cover");
+    if (r.cover) { const im = el("img"); im.src = r.cover; im.alt = ""; cover.append(im); } else cover.textContent = "♫";
+    const info = el("div", "rec-info");
+    info.append(el("span", "label", "Das ist"), el("h3", "", r.title || "?"), el("p", "", r.artist || ""),
+      el("small", "", [r.album, r.release ? r.release.slice(0, 4) : ""].filter(Boolean).join(" · ")));
+    const acts = el("div", "rec-acts");
+    const dl = el("button", "btn accent", "♫ Als Audio laden"); dl.type = "button";
+    dl.addEventListener("click", async () => {
+      dl.classList.add("busy");
+      try {
+        if (r.spotify_url) {
+          await api("add", { method: "POST", body: { url: r.spotify_url, kind: "audio", format: state.format["spotify:audio"] || "mp3", quality: "best" } });
+          toast(`„${r.title}“ wird geladen`, "success"); closeModal($("#recModal"));
+        } else {
+          closeModal($("#recModal"));
+          setSource("all"); setKind("audio");
+          urlEl.value = `${r.artist} - ${r.title}`; autosize(); updateMode(); urlEl.focus();
+          toast("Kein Spotify-Treffer – suche auf YouTube. Mit „Suchen“ starten.");
+        }
+      } catch (err) { toast(err.message, "error"); }
+      dl.classList.remove("busy");
+    });
+    acts.append(dl);
+    for (const [href, label] of [[r.spotify_url, "Spotify ↗"], [r.apple_url, "Apple Music ↗"], [r.song_link, "Alle Dienste ↗"]]) {
+      if (!href) continue;
+      const a = el("a", "btn ghost small", label); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; acts.append(a);
+    }
+    card.append(cover, info);
+    box.replaceChildren(card, acts);
+  }
+  $("#recOpen").addEventListener("click", () => {
+    $("#recResult").hidden = true; recStatus("Tippen und das Handy 10 Sekunden zur Musik halten"); openModal("recModal");
+  });
+  $("#recMic").addEventListener("click", recStart);
+  $("#recFile").addEventListener("change", (e) => {
+    const f = e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    if (f.size > 60 * 1024 * 1024) return toast("Datei ist zu groß (max. 60 MB)", "error");
+    $("#recResult").hidden = true; recSend(f, f.name);
+  });
+  $("#recModal").addEventListener("click", (e) => {
+    if (e.target.closest("[data-close]") && rec.recorder?.state === "recording") { rec.recorder.onstop = null; rec.recorder.stop(); recStopStream(); }
+  });
+
+  // =========================================================== admin: erkennung & spotify-app
+  async function loadAdminExtras() {
+    try {
+      const r = await api("recognize/settings");
+      $("#secRecognize").hidden = false;
+      $("#recEnabled").checked = r.enabled;
+      $("#recPill").textContent = r.enabled ? (r.has_token ? "an · eigener Schlüssel" : "an · ohne Schlüssel") : "aus";
+      $("#recPill").classList.toggle("on", r.enabled);
+      $("#recToken").value = ""; $("#recToken").placeholder = r.has_token ? "•••• gespeichert" : "leer = kostenloses Tageslimit";
+      $("#recClear").hidden = !r.has_token;
+    } catch { /* keine Rechte */ }
+    try {
+      const sp = await api("spotify-account");
+      $("#secSpotifyApp").hidden = false;
+      $("#spRedirect").textContent = sp.redirect_uri;
+      $("#spClientId").value = sp.client_id || "";
+      $("#spAppPill").textContent = sp.configured ? "eingerichtet" : "aus"; $("#spAppPill").classList.toggle("on", sp.configured);
+    } catch { /* egal */ }
+  }
+  $("#recSave").addEventListener("click", async () => {
+    try { await api("recognize/settings", { method: "PUT", body: { enabled: $("#recEnabled").checked, token: $("#recToken").value || undefined } }); toast("Song-Erkennung gespeichert", "success"); loadAdminExtras(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#recClear").addEventListener("click", async () => {
+    try { await api("recognize/settings", { method: "PUT", body: { clear_token: true } }); toast("Schlüssel entfernt"); loadAdminExtras(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#spAppSave").addEventListener("click", async () => {
+    try { const r = await api("spotify-account/app", { method: "PUT", body: { client_id: $("#spClientId").value.trim() } }); toast(r.configured ? "Spotify eingerichtet – jetzt kann sich jeder über den grünen Knopf verbinden" : "Spotify-App entfernt", "success"); loadAdminExtras(); }
+    catch (err) { toast(err.message, "error"); }
+  });
+  $("#spCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText($("#spRedirect").textContent); toast("Redirect URI kopiert", "success"); } catch { toast("Kopieren nicht möglich – bitte markieren", "error"); }
+  });
+
+  // =========================================================== mein spotify
+  const sp = { range: store("spRange") || "short_term", data: null };
+  const SP_RANGES = { short_term: "4 Wochen", medium_term: "6 Monate", long_term: "Alle Zeit" };
+  const SP_LOGO = '<svg viewBox="0 0 24 24" class="sp-logo"><circle cx="12" cy="12" r="10"/><path d="M7 9.5c3.5-1 7.5-.6 10.5 1M7.6 12.6c2.9-.8 6.1-.4 8.6 1M8.3 15.5c2.3-.6 4.6-.3 6.6.8"/></svg>';
+  function spotifyFab() {
+    if ($("#spotifyFab")) return;
+    const b = el("button", "spotify-fab"); b.id = "spotifyFab"; b.type = "button";
+    b.title = "Mein Spotify – Verlauf, Statistiken & Hörprofil"; b.setAttribute("aria-label", b.title);
+    b.innerHTML = SP_LOGO + '<span class="sp-eq"><i></i><i></i><i></i></span>';
+    b.addEventListener("click", openSpotify);
+    document.body.append(b);
+  }
+  const spImg = (src, cls = "") => { const d = el("div", "sp-img " + cls); if (src) { const i = el("img"); i.src = src; i.alt = ""; i.loading = "lazy"; d.append(i); } else d.textContent = "♫"; return d; };
+  const spDl = (url, title) => {
+    const b = el("button", "icon-btn small sp-dl", "↓"); b.type = "button"; b.title = "Als Audio laden"; b.hidden = !can("download") || !url;
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation(); b.classList.add("spin");
+      try { await api("add", { method: "POST", body: { url, kind: "audio", format: state.format["spotify:audio"] || "mp3", quality: "best" } }); toast(`„${title}“ wird geladen`, "success"); b.textContent = "✓"; }
+      catch (err) { toast(err.message, "error"); }
+      b.classList.remove("spin");
+    });
+    return b;
+  };
+  function spConnectView(status) {
+    const wrap = el("div", "sp-connect");
+    wrap.innerHTML = SP_LOGO;
+    wrap.append(el("h3", "", "Verbinde dein Spotify"),
+      el("p", "", "Sieh dir an, was du zuletzt gehört hast, deine Top-Interpreten und -Songs und dein persönliches Hörprofil. Jeden Song kannst du mit einem Klick laden."));
+    if (!status.configured) {
+      wrap.append(el("p", "warn-box", can("admin") ? "Zuerst einmalig unter Einstellungen → „Spotify-Konten“ eine Spotify-App hinterlegen." : "Das hat der Admin noch nicht eingerichtet."));
+      if (can("admin")) { const s = el("button", "btn ghost", "Zu den Einstellungen"); s.type = "button"; s.addEventListener("click", () => { closeModal($("#spModal")); openModal("settings"); loadInfo(); loadAdminExtras(); setTimeout(() => $("#secSpotifyApp").scrollIntoView({ behavior: "smooth" }), 300); }); wrap.append(s); }
+      return wrap;
+    }
+    const go = el("button", "btn sp-btn", "Mit Spotify verbinden"); go.type = "button";
+    go.addEventListener("click", async () => {
+      go.classList.add("busy");
+      try { location.href = (await api("spotify-account/connect", { method: "POST" })).url; }
+      catch (err) { toast(err.message, "error"); go.classList.remove("busy"); }
+    });
+    wrap.append(go, el("small", "legal-small", "ScobeTube liest nur (Profil, Verlauf, Top-Listen). Trennen geht jederzeit – der Zugang wird dann sofort gelöscht."));
+    return wrap;
+  }
+  function spBars(items, key, labelKey, unit) {
+    const max = Math.max(1, ...items.map((x) => x[key]));
+    const box = el("div", "sp-bars");
+    items.forEach((x, i) => {
+      const r = el("div", "sp-bar"); r.style.setProperty("--i", i);
+      const f = el("i"); requestAnimationFrame(() => requestAnimationFrame(() => { f.style.width = (x[key] / max * 100) + "%"; }));
+      const t = el("span", "track"); t.append(f);
+      r.append(el("span", "name", x[labelKey]), t, el("span", "val mono", x[key] + unit));
+      box.append(r);
+    });
+    return box;
+  }
+  function spClock(recent) {
+    const hours = new Array(24).fill(0);
+    for (const r of recent) if (r.played_at) hours[new Date(r.played_at).getHours()]++;
+    const max = Math.max(1, ...hours);
+    const box = el("div", "sp-clock");
+    hours.forEach((n, h) => {
+      const c = el("div", "col"); c.title = `${h}–${h + 1} Uhr: ${n} Songs`;
+      const f = el("i"); f.style.setProperty("--h", (n / max * 100) + "%"); f.style.setProperty("--i", h);
+      c.append(f, el("span", "", h % 6 === 0 ? String(h) : ""));
+      box.append(c);
+    });
+    const peak = hours.indexOf(max);
+    const label = peak < 5 ? "Nachteule 🦉" : peak < 11 ? "Frühaufsteher ☀" : peak < 17 ? "Tagsüber-Hörer 🎧" : "Abendmensch 🌙";
+    return [box, max > 1 ? label : ""];
+  }
+  function spStat(value, label, sub) {
+    const d = el("div", "sp-stat"); d.append(el("b", "", value), el("span", "", label)); if (sub) d.append(el("small", "", sub)); return d;
+  }
+  function renderSpotify(d, status) {
+    const body = el("div", "sp-body");
+    // Kopf
+    const head = el("div", "sp-head");
+    head.append(spImg(d.me.image, "round"));
+    const who = el("div", "sp-who");
+    who.append(el("span", "label", "Verbunden mit Spotify"), el("h3", "", d.me.name || "?"),
+      el("small", "", [d.me.product === "premium" ? "Premium" : d.me.product ? "Free" : "", d.me.followers != null ? `${d.me.followers} Follower` : "", d.me.country].filter(Boolean).join(" · ")));
+    const tabs = el("div", "chips sp-range");
+    Object.entries(SP_RANGES).forEach(([k, v]) => {
+      const c = el("button", "chip" + (k === sp.range ? " active" : ""), v); c.type = "button";
+      c.addEventListener("click", () => { sp.range = k; store("spRange", k); loadSpotify(); });
+      tabs.append(c);
+    });
+    const off = el("button", "btn ghost small", "Trennen"); off.type = "button";
+    off.addEventListener("click", async () => {
+      if (!off.classList.contains("confirm")) { off.classList.add("confirm"); off.textContent = "Wirklich trennen?"; setTimeout(() => { off.classList.remove("confirm"); off.textContent = "Trennen"; }, 3500); return; }
+      try { await api("spotify-account/disconnect", { method: "POST" }); toast("Spotify getrennt – Zugang gelöscht", "success"); openSpotify(); } catch (err) { toast(err.message, "error"); }
+    });
+    head.append(who, off);
+    body.append(head);
+    // Läuft gerade
+    if (d.now) {
+      const now = el("div", "sp-now" + (d.now.playing ? " playing" : ""));
+      now.append(spImg(d.now.image));
+      const t = el("div", "sp-now-t");
+      t.append(el("span", "label", d.now.playing ? "▶ Läuft gerade" : "⏸ Pausiert"), el("b", "", d.now.name), el("small", "", d.now.artists.join(", ")));
+      now.append(t, spDl(d.now.url, d.now.name));
+      body.append(now);
+    }
+    body.append(tabs);
+    // Hörprofil
+    const pr = d.profile;
+    const prof = el("section", "sp-sec");
+    prof.append(el("h4", "", "Dein Hörprofil"));
+    const stats = el("div", "sp-stats");
+    if (pr.mainstream != null) stats.append(spStat(pr.mainstream + "%", "Mainstream", pr.mainstream_label));
+    if (pr.loyalty != null) stats.append(spStat(pr.loyalty + "%", "Treue", "deiner Top-Interpreten hörst du schon lange"));
+    stats.append(spStat(String(pr.recent_minutes), "Minuten", "in den letzten 50 Songs"));
+    stats.append(spStat(String(pr.recent_unique_artists), "Interpreten", "in den letzten 50 Songs"));
+    if (pr.avg_length) stats.append(spStat(fmtTime(pr.avg_length), "Ø Songlänge"));
+    if (pr.explicit_share != null) stats.append(spStat(pr.explicit_share + "%", "Explicit"));
+    prof.append(stats);
+    if (pr.on_repeat) prof.append(el("p", "sp-fun", `🔁 Auf Dauerschleife: „${pr.on_repeat.name}“ von ${pr.on_repeat.artists} – ${pr.on_repeat.plays}× in deinen letzten 50 Songs`));
+    const grid = el("div", "sp-grid2");
+    if (pr.genres.length) { const g = el("div"); g.append(el("span", "label", "Genres"), spBars(pr.genres, "share", "name", "%")); grid.append(g); }
+    if (pr.decades.length) { const g = el("div"); g.append(el("span", "label", "Jahrzehnte deiner Top-Songs"), spBars(pr.decades, "count", "name", "")); grid.append(g); }
+    const [clock, clockLabel] = spClock(d.recent);
+    const cl = el("div"); cl.append(el("span", "label", "Wann du hörst" + (clockLabel ? " · " + clockLabel : "")), clock); grid.append(cl);
+    prof.append(grid);
+    body.append(prof);
+    // Top-Interpreten
+    const ta = el("section", "sp-sec");
+    ta.append(el("h4", "", `Top-Interpreten · ${SP_RANGES[d.range]}`));
+    const artists = el("div", "sp-artists");
+    d.top_artists.forEach((a, i) => {
+      const c = el("a", "sp-artist"); c.href = a.url || "#"; c.target = "_blank"; c.rel = "noopener noreferrer"; c.style.setProperty("--i", i);
+      c.append(spImg(a.image, "round"), el("span", "rank mono", String(i + 1)), el("b", "", a.name), el("small", "", (a.genres || []).slice(0, 2).join(", ")));
+      artists.append(c);
+    });
+    ta.append(artists.childElementCount ? artists : el("p", "empty-note", "Noch zu wenig gehört für diesen Zeitraum."));
+    body.append(ta);
+    // Top-Songs & Verlauf
+    const trackList = (list, withTime) => {
+      const box = el("div", "sp-tracks");
+      list.forEach((t, i) => {
+        const r = el("div", "sp-track"); r.style.setProperty("--i", i % 25);
+        r.append(el("span", "rank mono", withTime ? "" : String(i + 1)), spImg(t.image));
+        const inf = el("div", "sp-t-info"); inf.append(el("b", "", t.name), el("small", "", t.artists.join(", ") + (t.album ? " · " + t.album : "")));
+        r.append(inf, el("span", "mono sp-t-meta", withTime && t.played_at ? ago(Date.parse(t.played_at) / 1000) : fmtTime(t.duration)), spDl(t.url, t.name));
+        box.append(r);
+      });
+      return box;
+    };
+    const tt = el("section", "sp-sec"); tt.append(el("h4", "", `Top-Songs · ${SP_RANGES[d.range]}`), d.top_tracks.length ? trackList(d.top_tracks, false) : el("p", "empty-note", "Noch keine Daten."));
+    const rp = el("section", "sp-sec"); rp.append(el("h4", "", "Zuletzt gehört"), d.recent.length ? trackList(d.recent, true) : el("p", "empty-note", "Noch nichts gehört."));
+    body.append(tt, rp, el("p", "legal-small sp-foot", `Daten von Spotify · Stand ${new Date(d.fetched * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`));
+    $("#spBody").replaceChildren(body);
+  }
+  async function loadSpotify(fresh) {
+    const bodyEl = $("#spBody");
+    bodyEl.classList.add("loading");
+    if (!bodyEl.firstChild) bodyEl.replaceChildren(el("div", "sp-loading", "Lade deine Spotify-Daten …"));
+    try { renderSpotify(await api(`spotify-account/overview?range=${sp.range}${fresh ? "&fresh=1" : ""}`)); }
+    catch (err) {
+      if (/Nicht mit Spotify verbunden/.test(err.message)) return openSpotify();
+      bodyEl.replaceChildren(el("p", "warn-box", err.message));
+    }
+    bodyEl.classList.remove("loading");
+  }
+  async function openSpotify() {
+    openModal("spModal");
+    $("#spBody").replaceChildren(el("div", "sp-loading", "…"));
+    let status;
+    try { status = await api("spotify-account"); } catch (err) { $("#spBody").replaceChildren(el("p", "warn-box", err.message)); return; }
+    if (!status.linked) { $("#spBody").replaceChildren(spConnectView(status)); return; }
+    $("#spBody").replaceChildren();
+    loadSpotify();
+  }
+
+  // =========================================================== start
+  function initExtras(me) {
+    spotifyFab();
+    if (can("admin")) { refreshReqPill(); setInterval(refreshReqPill, 120000); }
+    $("#settingsBtn").addEventListener("click", () => { if (can("admin")) loadAdminExtras(); });
+    const qp = new URLSearchParams(location.search);
+    const spState = qp.get("spotify");
+    if (spState) {
+      history.replaceState(null, "", location.pathname);
+      if (spState === "connected") { toast("🎉 Spotify verbunden!", "success"); setTimeout(openSpotify, 300); }
+      else if (spState === "denied") toast("Spotify-Verbindung abgebrochen");
+      else toast("Spotify-Verbindung fehlgeschlagen" + (qp.get("msg") ? ": " + qp.get("msg") : ""), "error", 8000);
+    }
+    if (location.hash === "#quota" && can("admin")) { openModal("usersModal"); loadUsers(); history.replaceState(null, "", location.pathname); }
+    if (location.hash === "#audit" && can("admin")) { $("#menuAudit").click(); history.replaceState(null, "", location.pathname); }
+  }
+
   async function boot() {
     let me;
     try { me = await api("auth/me"); } catch { return; }
@@ -1949,6 +2518,9 @@
     $("#userAvatar").textContent = me.user.username.slice(0, 2).toUpperCase();
     $("#userRole").textContent = me.user.admin ? "Administrator" : "Benutzer";
     $("#menuUsers").hidden = !can("admin");
+    $("#menuAudit").hidden = !can("admin");
+    $("#recOpen").hidden = !can("download");
+    renderQuota(me.user.quota);
     set2faPill(me.user.twofa);
     $("#deck").hidden = !can("download");
     $("#clearDone").hidden = !can("delete");
@@ -1987,6 +2559,7 @@
     if (can("settings")) { startSystem(); loadHealer(); setInterval(loadHealer, 60000); }
     loadAppInfo();
     maybeSuggestPotato();
+    initExtras(me.user);
     if (can("storage")) { loadStorage(); setInterval(loadStorage, 60000); }
   }
   boot();

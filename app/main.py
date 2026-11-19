@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import html
 import json
 import logging
 import os
@@ -26,11 +27,11 @@ from webauthn.helpers.structs import (AuthenticatorSelectionCriteria, Authentica
                                       PublicKeyCredentialDescriptor, ResidentKeyRequirement,
                                       UserVerificationRequirement)
 from fastapi import APIRouter, FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from . import imgproxy, library, lyrics, tags
+from . import audit, history, imgproxy, library, lyrics, notify, quota, recognize, spotify_account, tags
 from .legal import legal
 from . import appdist
 from .healer import healer
@@ -60,6 +61,7 @@ async def _cleanup_loop() -> None:
         try:
             await asyncio.to_thread(manager.cleanup_expired)
             await asyncio.to_thread(imgproxy.cleanup)
+            await asyncio.to_thread(audit.prune)
         except Exception as e:  # noqa: BLE001
             log.error("Auto-Löschung fehlgeschlagen: %s", e)
         await asyncio.sleep(300)
@@ -112,7 +114,8 @@ api = APIRouter(prefix="/api")
 # ------------------------------------------------------- sicherheit
 PUBLIC_PATHS = {"/login", "/healthz", "/manifest.webmanifest", "/api/auth/status", "/api/auth/login",
                 "/api/auth/setup", "/api/auth/login/2fa", "/rechtliches", "/api/legal", "/api/legal/reset", "/robots.txt", "/sw.js", "/share",
-                "/api/app/version", "/app/download", "/api/auth/login/passkey/options", "/api/auth/login/passkey"}
+                "/api/app/version", "/app/download", "/api/auth/login/passkey/options", "/api/auth/login/passkey",
+                "/api/spotify-account/callback"}
 PUBLIC_STATIC = {"/static/style.css", "/static/login.js", "/static/webauthn.js", "/static/eggs.js", "/static/legal.js", "/static/md.js",
                  "/static/icon.svg", "/static/icon-192.png", "/static/icon-512.png",
                  "/static/icon-maskable-512.png", "/static/potato.js"}
@@ -280,7 +283,55 @@ _EMPTY_USAGE = {"downloads": 0, "bytes_total": 0, "files_now": 0, "bytes_now": 0
 
 def _me(user: User) -> dict[str, Any]:
     usage = manager.usage().get(user.username.lower(), _EMPTY_USAGE)
-    return {**user.public(), "effective": user.effective_permissions(), "usage": usage}
+    return {**user.public(), "effective": user.effective_permissions(), "usage": usage,
+            "quota": quota.info(user, usage.get("bytes_now", 0)), "spotify": spotify_account.linked(user.username)}
+
+
+def _audit(request: Request | None, cat: str, action: str, detail: str | None = None,
+           target: str | None = None, user: str | None = None) -> None:
+    if user is None and request is not None:
+        u = getattr(request.state, "user", None)
+        user = u.username if u else None
+    audit.record(cat, action, user=user, ip=_client_ip(request) if request is not None else None,
+                 detail=detail, target=target)
+
+
+_fail_alerted: dict[str, float] = {}
+
+
+def _alert_failed_logins(username: str, ip: str) -> None:
+    """Ab 5 Fehlversuchen pro Stunde bei einem echten Konto: Admins benachrichtigen (höchstens stündlich)."""
+    user = users.get(username)
+    if not user:
+        return
+    n = audit.recent_failures(user.username)
+    key = user.username.lower()
+    if n >= 5 and time.time() - _fail_alerted.get(key, 0) > 3600:
+        _fail_alerted[key] = time.time()
+        notify.send_admins(users, "⚠ Verdächtige Anmeldeversuche",
+                           f"{n} Fehlversuche für „{user.username}“ in der letzten Stunde (zuletzt von {ip}).",
+                           kind="security", link="#audit")
+
+
+def _quota_full(owner: str) -> str | None:
+    user = users.get(owner)
+    lim = quota.limit_bytes(user) if user else None
+    if lim is None:
+        return None
+    used = manager.usage().get(owner.lower(), _EMPTY_USAGE).get("bytes_now", 0)
+    if used >= lim:
+        return (f"Dein Speicher-Kontingent ({_fmt_gb(lim)}) ist voll. Lösche alte Downloads oder fordere "
+                f"im Profilmenü mehr Speicher an.")
+    return None
+
+
+def _fmt_gb(b: int | float) -> str:
+    if b < quota.GB:
+        return f"{b / 1024 ** 2:.0f} MB"
+    return f"{b / quota.GB:.1f}".rstrip("0").rstrip(".").replace(".", ",") + " GB"
+
+
+manager.quota_check = _quota_full
 
 
 # ------------------------------------------------------------ anmeldung
@@ -326,6 +377,9 @@ async def auth_login(request: Request):
     if not user:
         limiter.failed(ip, username)
         log.warning("Fehlgeschlagene Anmeldung für „%s“ von %s", username, ip)
+        audit.record("login_failed", "Falsches Passwort", ip=ip, target=username,
+                     detail=None if users.get(username) else "Konto existiert nicht")
+        _alert_failed_logins(username, ip)
         await asyncio.sleep(random.uniform(0.4, 0.9))
         raise HTTPException(401, "Benutzername oder Passwort falsch")
     if user.twofa:
@@ -342,6 +396,9 @@ def _login_response(request: Request, user: User, remember: bool) -> JSONRespons
     ip = _client_ip(request)
     token, ttl = users.create_session(user, remember, ip, request.headers.get("user-agent", ""))
     log.info("Anmeldung: %s von %s", user.username, ip)
+    agent = auth.describe_agent(request.headers.get("user-agent", ""))
+    audit.record("login", "Angemeldet", user=user.username, ip=ip,
+                 detail=f"{agent['browser']} auf {agent['system']}" + (" · angemeldet bleiben" if remember else ""))
     response = JSONResponse({"ok": True, "user": _me(user)})
     _set_session_cookie(request, response, token, ttl if remember else None)
     return response
@@ -353,6 +410,8 @@ async def _second_factor_failed(request: Request, ticket_id: str, username: str,
         t.attempts += 1
     limiter.failed(_client_ip(request), username)
     log.warning("Falscher zweiter Faktor für „%s“ von %s", username, _client_ip(request))
+    audit.record("login_failed", "Falscher zweiter Faktor", ip=_client_ip(request), target=username)
+    _alert_failed_logins(username, _client_ip(request))
     await asyncio.sleep(random.uniform(0.4, 0.9))
     raise HTTPException(401, msg)
 
@@ -387,6 +446,8 @@ async def auth_login_code(request: Request):
         if not ok and auth.use_recovery_code(user, code):
             ok = True
             log.warning("%s hat einen Wiederherstellungscode benutzt (%d übrig)", user.username, len(user.recovery_codes))
+            audit.record("security", "Wiederherstellungscode benutzt", user=user.username, ip=_client_ip(request),
+                         detail=f"{len(user.recovery_codes)} übrig")
         if ok:
             users.save()
     if not ok:
@@ -504,12 +565,14 @@ async def revoke_my_session(request: Request):
     if data.get("others"):
         users.revoke_user_sessions(user.username, except_key=request.state.session_key)
         log.info("%s hat alle anderen Geräte abgemeldet", user.username)
+        _audit(request, "security", "Alle anderen Geräte abgemeldet")
     else:
         key = _key_for_public_id(user.username, str(data.get("id", "")))
         if not key:
             raise HTTPException(404, "Sitzung nicht gefunden")
         users.revoke(key)
         log.info("%s hat ein Gerät abgemeldet", user.username)
+        _audit(request, "security", "Ein Gerät abgemeldet")
     return {"sessions": _session_rows(user.username, request.state.session_key)}
 
 
@@ -528,6 +591,7 @@ async def logout_user_admin(username: str, request: Request):
         raise HTTPException(404, "Benutzer nicht gefunden")
     users.revoke_user_sessions(username, except_key=request.state.session_key)
     log.warning("%s hat „%s“ auf allen Geräten abgemeldet", admin.username, username)
+    _audit(request, "admin", "Benutzer überall abgemeldet", target=username)
     return {"ok": True}
 
 
@@ -562,6 +626,7 @@ async def totp_enable(request: Request):
         users.save()
     _pending_totp.pop(user.username.lower(), None)
     log.info("%s hat die Authenticator-App aktiviert", user.username)
+    _audit(request, "security", "Authenticator-App aktiviert")
     return {**_twofa_status(user), "recovery_codes": codes}
 
 
@@ -576,6 +641,7 @@ async def totp_disable(request: Request):
             user.recovery_codes = []
         users.save()
     log.info("%s hat die Authenticator-App deaktiviert", user.username)
+    _audit(request, "security", "Authenticator-App deaktiviert")
     return _twofa_status(user)
 
 
@@ -633,6 +699,7 @@ async def passkey_register(request: Request):
         codes = _ensure_recovery(user)
         users.save()
     log.info("%s hat einen Passkey hinzugefügt (%s)", user.username, name)
+    _audit(request, "security", "Passkey hinzugefügt", detail=name)
     return {**_twofa_status(user), "recovery_codes": codes}
 
 
@@ -685,6 +752,7 @@ async def admin_user_security(username: str, request: Request):
             users.revoke_user_sessions(user.username, save=False)   # Sicherheits-Eingriff → überall abmelden
         users.save()
     log.warning("%s hat bei „%s“ %s entfernt", admin.username, user.username, what)
+    _audit(request, "admin", "Notfall-Werkzeug benutzt", target=user.username, detail=f"{what} entfernt")
     return {**user.public(), "passkey_list": [{"id": p["id"], "name": p.get("name") or "Passkey",
                                                "created": p.get("created"), "last_used": p.get("last_used")}
                                               for p in user.passkeys]}
@@ -701,6 +769,7 @@ async def reset_user_2fa(username: str, request: Request):
         users.revoke_user_sessions(user.username, save=False)
         users.save()
     log.warning("%s hat den Zwei-Faktor-Login von „%s“ zurückgesetzt", admin.username, user.username)
+    _audit(request, "admin", "Zwei-Faktor-Login zurückgesetzt", target=user.username)
     return user.public()
 
 
@@ -708,6 +777,7 @@ async def reset_user_2fa(username: str, request: Request):
 async def auth_logout(request: Request):
     if request.state.session_key:
         users.revoke(request.state.session_key)
+        _audit(request, "login", "Abgemeldet")
     response = JSONResponse({"ok": True})
     response.delete_cookie(COOKIE_NAME, path=(config.URL_PREFIX or "") + "/")
     return response
@@ -733,6 +803,7 @@ async def change_password(request: Request):
             await asyncio.to_thread(users.update, user.username, password=new)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    _audit(request, "security", "Passwort geändert")
     # Alle Sitzungen wurden beendet – hier direkt neu anmelden
     token, ttl = users.create_session(user, False, _client_ip(request), request.headers.get("user-agent", ""))
     response = JSONResponse({"ok": True})
@@ -770,6 +841,7 @@ async def create_user(request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     log.info("%s hat Benutzer „%s“ angelegt", admin.username, user.username)
+    _audit(request, "admin", "Benutzer angelegt", target=user.username, detail=", ".join(user.permissions) or "keine Rechte")
     return user.public()
 
 
@@ -791,7 +863,24 @@ async def update_user(username: str, request: Request):
         raise HTTPException(404, "Benutzer nicht gefunden") from None
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    changes = []
+    if "quota_gb" in data:
+        q = data["quota_gb"]
+        try:
+            q = None if q in (None, "") else max(0.0, min(100_000.0, float(q)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Ungültiges Kontingent") from None
+        user.quota_gb = q
+        users.save()
+        changes.append("Kontingent: " + ("Standard" if q is None else "unbegrenzt" if q == 0 else f"{q:g} GB"))
+    if "permissions" in data:
+        changes.append("Rechte: " + (", ".join(user.permissions) or "keine"))
+    if "disabled" in data:
+        changes.append("gesperrt" if data.get("disabled") else "entsperrt")
+    if data.get("password"):
+        changes.append("Passwort neu gesetzt")
     log.info("%s hat Benutzer „%s“ geändert", admin.username, user.username)
+    _audit(request, "admin", "Benutzer geändert", target=user.username, detail="; ".join(changes))
     return user.public()
 
 
@@ -807,7 +896,295 @@ async def delete_user(username: str, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     log.info("%s hat Benutzer „%s“ gelöscht", admin.username, username)
+    _audit(request, "admin", "Benutzer gelöscht", target=username)
+    history.forget_user(username)
+    notify.clear(username)
+    spotify_account.unlink(username)
     return {"ok": True}
+
+
+# ---------------------------------------------------- benachrichtigungen
+notify.listeners.append(lambda user, msg: manager.emit("notify", {"user": user, "msg": msg}))
+
+
+@api.get("/notifications")
+async def notifications(request: Request, after: int = 0):
+    return notify.list_for(_user(request).username, after)
+
+
+@api.post("/notifications/read")
+async def notifications_read(request: Request):
+    data = await _json(request)
+    notify.mark_read(_user(request).username, data.get("upto"))
+    return {"ok": True}
+
+
+# ---------------------------------------------------- verlauf
+@api.get("/history")
+async def history_list(request: Request, q: str = "", kind: str = "", offset: int = 0):
+    user = _user(request)
+    return history.list_for(user.username, q[:100], kind, max(0, offset))
+
+
+@api.delete("/history/{entry_id}")
+async def history_delete(entry_id: str, request: Request):
+    if not history.delete(_user(request).username, entry_id):
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    return {"ok": True}
+
+
+@api.post("/history/clear")
+async def history_clear(request: Request):
+    n = history.clear(_user(request).username)
+    _audit(request, "file", "Verlauf gelöscht", detail=f"{n} Einträge")
+    return {"removed": n}
+
+
+@api.post("/history/settings")
+async def history_settings(request: Request):
+    data = await _json(request)
+    history.set_enabled(_user(request).username, bool(data.get("enabled", True)))
+    return {"enabled": bool(data.get("enabled", True))}
+
+
+@api.post("/history/{entry_id}/again")
+async def history_again(entry_id: str, request: Request):
+    user = _need(request, "download")
+    e = history.get(user.username, entry_id)
+    if not e:
+        raise HTTPException(404, "Eintrag nicht gefunden")
+    full = _quota_full(user.username)
+    if full:
+        raise HTTPException(507, full)
+    try:
+        options = Options.parse({"kind": e["kind"], "format": e["format"], "quality": e.get("quality") or "best"})
+    except ValueError:
+        options = Options.parse({"kind": e["kind"]})
+    created = manager.add([e["url"]], options, owner=user.username)
+    _audit(request, "download", "Erneut geladen (Verlauf)", detail=e.get("title"))
+    return {"added": [i.id for i in created]}
+
+
+# ---------------------------------------------------- speicher-kontingent
+@api.get("/quota")
+async def quota_me(request: Request):
+    user = _user(request)
+    used = manager.usage().get(user.username.lower(), _EMPTY_USAGE).get("bytes_now", 0)
+    return quota.info(user, used)
+
+
+@api.post("/quota/request")
+async def quota_request(request: Request):
+    user = _user(request)
+    if user.is_admin:
+        raise HTTPException(400, "Admins haben unbegrenzten Speicher")
+    data = await _json(request)
+    try:
+        r = quota.request(user.username, float(data.get("gb") or 0), str(data.get("reason") or ""))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, str(e) if isinstance(e, ValueError) and str(e) else "Ungültige Angabe") from e
+    used = manager.usage().get(user.username.lower(), _EMPTY_USAGE).get("bytes_now", 0)
+    lim = quota.limit_bytes(user)
+    notify.send_admins(users, "💾 Speicher-Anfrage",
+                       f"{user.username} möchte {r['gb']:g} GB (belegt: {_fmt_gb(used)} von "
+                       f"{_fmt_gb(lim) if lim else 'unbegrenzt'})" + (f" – „{r['reason']}“" if r["reason"] else ""),
+                       kind="quota", link="#quota")
+    _audit(request, "quota", "Mehr Speicher angefragt", detail=f"{r['gb']:g} GB" + (f" – {r['reason']}" if r["reason"] else ""))
+    return r
+
+
+@api.post("/quota/request/cancel")
+async def quota_request_cancel(request: Request):
+    user = _user(request)
+    if not quota.cancel(user.username):
+        raise HTTPException(404, "Keine offene Anfrage")
+    return {"ok": True}
+
+
+@api.get("/quota/requests")
+async def quota_requests(request: Request):
+    _need(request, "admin")
+    usage = manager.usage()
+    rows = []
+    for r in quota.list_requests():
+        u = users.get(r["user"])
+        rows.append({**r, "used": usage.get(r["user"].lower(), _EMPTY_USAGE).get("bytes_now", 0),
+                     "limit": quota.limit_bytes(u) if u else None, "exists": bool(u)})
+    return {"requests": rows, "default_gb": quota.DEFAULT_GB}
+
+
+@api.post("/quota/requests/{req_id}")
+async def quota_decide(req_id: str, request: Request):
+    admin = _need(request, "admin")
+    data = await _json(request)
+    approve = bool(data.get("approve"))
+    gb = data.get("gb")
+    try:
+        gb = float(gb) if gb not in (None, "") else None
+        r = quota.decide(req_id, admin.username, approve, gb)
+    except KeyError:
+        raise HTTPException(404, "Anfrage nicht gefunden") from None
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, str(e) or "Ungültige Angabe") from e
+    user = users.get(r["user"])
+    if approve and user:
+        user.quota_gb = r["granted_gb"]
+        users.save()
+    if user:
+        notify.send(user.username, "💾 Mehr Speicher genehmigt" if approve else "💾 Speicher-Anfrage abgelehnt",
+                    f"Dein Kontingent beträgt jetzt {r['granted_gb']:g} GB." if approve
+                    else f"{admin.username} hat deine Anfrage über {r['gb']:g} GB abgelehnt.", kind="quota")
+    _audit(request, "quota", "Speicher-Anfrage " + ("genehmigt" if approve else "abgelehnt"), target=r["user"],
+           detail=f"{r['granted_gb'] or r['gb']:g} GB")
+    return r
+
+
+# ---------------------------------------------------- aktivitätsprotokoll
+@api.get("/audit")
+async def audit_list(request: Request, user: str = "", cat: str = "", q: str = "", before: str = ""):
+    _need(request, "admin")
+    data = await asyncio.to_thread(audit.query, user=user[:64], category=cat if cat in audit.CATEGORIES else "",
+                                   q=q[:100], before=before[:40], limit=100)
+    return {**data, "categories": audit.CATEGORIES, "choices": audit.RETENTION_CHOICES}
+
+
+@api.post("/audit/settings")
+async def audit_settings(request: Request):
+    _need(request, "admin")
+    data = await _json(request)
+    try:
+        days = audit.set_retention(int(data.get("days", 30)))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, "Ungültige Aufbewahrungsdauer") from e
+    _audit(request, "admin", "Protokoll-Aufbewahrung geändert", detail=f"{days} Tage")
+    return {"days": days}
+
+
+@api.post("/audit/clear")
+async def audit_clear(request: Request):
+    _need(request, "admin")
+    await asyncio.to_thread(audit.clear)
+    _audit(request, "admin", "Aktivitätsprotokoll geleert")
+    return {"ok": True}
+
+
+# ---------------------------------------------------- song erkennen
+@api.post("/recognize")
+async def recognize_song(request: Request):
+    _need(request, "download")
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None or not hasattr(upload, "read"):
+        raise HTTPException(400, "Keine Aufnahme erhalten")
+    raw = await upload.read(recognize.MAX_UPLOAD + 1)
+    try:
+        res = await asyncio.wait_for(asyncio.to_thread(recognize.recognize, raw), timeout=90)
+    except PermissionError as e:
+        raise HTTPException(403, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except (RuntimeError, asyncio.TimeoutError) as e:
+        raise HTTPException(502, str(e) or "Zeitüberschreitung bei der Erkennung") from e
+    if res.get("cover"):
+        res["cover"] = imgproxy.wrap(res["cover"])
+    _audit(request, "download", "Song erkannt" if res.get("found") else "Song nicht erkannt",
+           detail=f"{res.get('artist')} – {res.get('title')}" if res.get("found") else None)
+    return res
+
+
+@api.get("/recognize/settings")
+async def recognize_settings_get(request: Request):
+    _need(request, "admin")
+    return recognize.public()
+
+
+@api.put("/recognize/settings")
+async def recognize_settings_put(request: Request):
+    _need(request, "admin")
+    data = await _json(request)
+    res = recognize.update(data.get("enabled"), data.get("token"), bool(data.get("clear_token")))
+    _audit(request, "admin", "Song-Erkennung eingestellt", detail="an" if res["enabled"] else "aus")
+    return res
+
+
+# ---------------------------------------------------- spotify-konto
+def _spotify_redirect(request: Request) -> str:
+    scheme = "https" if _is_https(request) else "http"
+    host = (request.headers.get("host") or "localhost").split(",")[0].strip()
+    return f"{scheme}://{host}{config.URL_PREFIX}/api/spotify-account/callback"
+
+
+@api.get("/spotify-account")
+async def spotify_status(request: Request):
+    user = _user(request)
+    return {"configured": spotify_account.configured(), "linked": spotify_account.linked(user.username),
+            "redirect_uri": _spotify_redirect(request) if user.is_admin else None,
+            "client_id": spotify_account.app_settings()["client_id"] if user.is_admin else None}
+
+
+@api.put("/spotify-account/app")
+async def spotify_app(request: Request):
+    _need(request, "admin")
+    data = await _json(request)
+    try:
+        spotify_account.set_client_id(str(data.get("client_id") or ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    _audit(request, "admin", "Spotify-App eingerichtet" if data.get("client_id") else "Spotify-App entfernt")
+    return {"configured": spotify_account.configured()}
+
+
+@api.post("/spotify-account/connect")
+async def spotify_connect(request: Request):
+    user = _user(request)
+    try:
+        return {"url": spotify_account.start(user.username, _spotify_redirect(request))}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+def _bounce(params: dict[str, str]) -> HTMLResponse:
+    """Rücksprung von Spotify: Das Sitzungs-Cookie ist SameSite=Strict und fehlt bei einer Weiterleitung
+    von fremder Seite. Eine kleine eigene Seite, die selbst weiterleitet, ist „same-site“ → Cookie wieder da."""
+    target = html.escape("../../?" + urlencode(params), quote=True)
+    return HTMLResponse(f'<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url={target}">'
+                        f'<meta name="referrer" content="no-referrer"><title>ScobeTube</title>'
+                        f'<p style="font-family:sans-serif">Weiter zu <a href="{target}">ScobeTube</a> …</p>',
+                        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+
+@api.get("/spotify-account/callback")
+async def spotify_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+    # Kein Sitzungs-Cookie hier (SameSite=Strict) – ausgewiesen wird über den einmaligen „state“
+    if error or not code:
+        spotify_account.drop(state)
+        return _bounce({"spotify": "denied" if error == "access_denied" else "error"})
+    try:
+        username, info_ = await asyncio.to_thread(spotify_account.finish, state, code)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Spotify-Verbindung fehlgeschlagen: %s", e)
+        return _bounce({"spotify": "error", "msg": str(e)[:200]})
+    _audit(request, "security", "Spotify verbunden", detail=info_.get("name"), user=username)
+    return _bounce({"spotify": "connected"})
+
+
+@api.post("/spotify-account/disconnect")
+async def spotify_disconnect(request: Request):
+    user = _user(request)
+    if spotify_account.unlink(user.username):
+        _audit(request, "security", "Spotify getrennt")
+    return {"ok": True}
+
+
+@api.get("/spotify-account/overview")
+async def spotify_overview(request: Request, range: str = "short_term", fresh: bool = False):  # noqa: A002
+    user = _user(request)
+    try:
+        return await asyncio.to_thread(spotify_account.overview, user.username, range, fresh)
+    except spotify_account.NotLinked:
+        raise HTTPException(409, "Nicht mit Spotify verbunden") from None
+    except RuntimeError as e:
+        raise HTTPException(502, str(e)) from e
 
 
 # ------------------------------------------------------------------ api
@@ -858,7 +1235,12 @@ async def add(request: Request):
         options = Options.parse(data)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    full = _quota_full(user.username)
+    if full:
+        raise HTTPException(507, full)
     created = manager.add(urls, options, owner=user.username)
+    _audit(request, "download", "Download gestartet", detail=f"{options.kind}/{options.format} · " + " ".join(urls[:3])
+           + (f" (+{len(urls) - 3})" if len(urls) > 3 else ""))
     return {"added": [i.id for i in created]}
 
 
@@ -908,7 +1290,15 @@ def _to_library(item: Item, force: bool = False) -> bool:
         return False
 
 
-manager.on_done = _to_library
+def _on_done(item: Item) -> None:
+    try:
+        history.add(item)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Verlauf: %s", e)
+    _to_library(item)
+
+
+manager.on_done = _on_done
 
 
 @api.get("/library")
@@ -992,6 +1382,7 @@ async def delete(item_id: str, request: Request, delete_file: bool = False):
         return {"ok": True, "unshared": True}
     _need(request, "delete")
     manager.remove(item_id, delete_file)
+    _audit(request, "file", "Download entfernt" + (" (mit Datei)" if delete_file else ""), detail=item.title)
     return {"ok": True}
 
 
@@ -1005,6 +1396,7 @@ async def share(item_id: str, request: Request):
         raise HTTPException(409, "Nur fertige Downloads können geteilt werden")
     data = await _json(request)
     owner = (item.owner or "").lower()
+    before_shared = set(item.shared_with)
     names = []
     for raw in data.get("users") or []:
         u = users.get(str(raw))
@@ -1014,6 +1406,10 @@ async def share(item_id: str, request: Request):
             names.append(u.username.lower())
     item = manager.set_shared(item_id, names)
     log.info("%s teilt „%s“ mit: %s", user.username, item.title, ", ".join(names) or "niemandem")
+    _audit(request, "file", "Download geteilt", detail=f"{item.title} → {', '.join(names) or 'niemand'}")
+    for n in names:
+        if n not in before_shared:
+            notify.send(n, "📥 Neuer geteilter Download", f"{user.username} hat „{item.title}“ mit dir geteilt.", kind="share")
     return item.public()
 
 
@@ -1030,6 +1426,8 @@ async def clear(request: Request):
     user = _need(request, "delete")
     data = await _json(request)
     n = manager.clear(str(data.get("which", "done")), bool(data.get("delete_files")), _owned(user))
+    if n:
+        _audit(request, "file", "Liste aufgeräumt", detail=f"{n} Einträge" + (" mit Dateien" if data.get("delete_files") else ""))
     return {"removed": n}
 
 
@@ -1291,6 +1689,10 @@ async def events(request: Request):
                     yield ": ping\n\n"
                     continue
                 me = user.username.lower()
+                if event == "notify":
+                    if data.get("user") == me:
+                        yield _sse("notify", data["msg"])
+                    continue
                 if event == "revoked":  # Freigabe entzogen → nur bei diesem Benutzer entfernen
                     if data.get("user") == me and not user.has("view_all"):
                         yield _sse("removed", {"id": data["id"]})
@@ -1321,6 +1723,7 @@ async def upload_cookies(file: UploadFile, request: Request):
     fd = os.open(config.COOKIES_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
+    _audit(request, "admin", "Cookies hochgeladen")
     return {"ok": True}
 
 
@@ -1366,6 +1769,7 @@ async def purge(request: Request):
     user = _need(request, "storage")
     count, freed = await asyncio.to_thread(manager.purge_downloads)
     log.info("%s hat den Speicher geleert (%d Dateien)", user.username, count)
+    _audit(request, "admin", "Speicher geleert", detail=f"{count} Dateien")
     return {"files": count, "freed": freed}
 
 
@@ -1577,6 +1981,7 @@ async def legal_update(request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     log.info("%s hat die Rechtstexte geändert", admin.username)
+    _audit(request, "admin", "Rechtstexte geändert")
     return await legal_info(request)
 
 
