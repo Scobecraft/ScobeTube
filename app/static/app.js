@@ -447,6 +447,8 @@
     const pin = $(".pin", node); pin.classList.toggle("on", !!it.keep);
     pin.title = it.keep ? "Nicht mehr behalten (wieder automatisch löschen)" : "Behalten – wird nicht automatisch gelöscht";
     $(".tag.kept", node).textContent = it.keep ? "📌 Behalten" : "";
+    $(".tag.lib", node).textContent = it.library ? "📚 Mediathek" : "";
+    $(".tag.lib", node).title = it.library ? "In der Mediathek: " + it.library : "";
     $(".tag.sb", node).textContent = o.sponsorblock ? "SponsorBlock" : "";
     $(".tag.chap", node).textContent = it.chapter ? `Kapitel ${it.chapter.number}/${it.chapter.count}` : (o.chapters && it.status !== "done" ? "Kapitel ✂" : "");
     const img = $("img.thumb", node), labelImg = $(".vinyl img", node);
@@ -745,7 +747,70 @@
   });
 
   // Einstellungen
-  $("#settingsBtn").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); loadHealer(); });
+  $("#settingsBtn").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); loadHealer(); if (can("admin")) loadLibrary(); });
+
+  // ------------------------------------------------------- mediathek
+  const lib = { mode: "pinned", layout: "artist_album", server: "none" };
+  const LIB_HINTS = {
+    navidrome: "Navidrome-Benutzer mit Admin-Rechten. Für den Scan nutzt ScobeTube die Subsonic-API (das Passwort wird nur gesalzen gehasht übertragen).",
+    jellyfin: "API-Schlüssel anlegen unter Dashboard → API-Schlüssel. Den Mediathek-Ordner in Jellyfin als Musik-Mediathek hinzufügen.",
+    plex: "Plex-Token (X-Plex-Token), zu finden über „XML anzeigen“ bei einem Eintrag in Plex. Den Ordner als Musik-Mediathek hinzufügen.",
+  };
+  function libChips(id, v) { $$(`#${id} .chip`).forEach((c) => c.classList.toggle("active", c.dataset.v === v)); }
+  function renderLibServer() {
+    libChips("libServer", lib.server);
+    $("#libConn").hidden = lib.server === "none";
+    $("#libUserF").hidden = lib.server !== "navidrome";
+    $("#libSecretL").textContent = { navidrome: "Passwort", jellyfin: "API-Schlüssel", plex: "Plex-Token" }[lib.server] || "";
+    $("#libUrl").placeholder = { navidrome: "http://navidrome:4533", jellyfin: "http://jellyfin:8096", plex: "http://plex:32400" }[lib.server] || "";
+    $("#libHint").textContent = LIB_HINTS[lib.server] || "";
+    $("#libTest").hidden = $("#libScan").hidden = lib.server === "none";
+  }
+  function renderLibrary(d) {
+    Object.assign(lib, { mode: d.mode, layout: d.layout, server: d.server });
+    $("#secLibrary").hidden = false;
+    $("#libEnabled").checked = d.enabled;
+    $(".lib-grid").classList.toggle("off", !d.enabled);
+    $("#libPill").textContent = d.enabled ? "an" : "aus"; $("#libPill").classList.toggle("on", d.enabled);
+    libChips("libMode", d.mode); libChips("libLayout", d.layout); renderLibServer();
+    $("#libUrl").value = d.url || ""; $("#libUser").value = d.username || "";
+    $("#libSecret").value = ""; $("#libSecret").placeholder = d.has_secret ? "•••• gespeichert" : "";
+    $("#libDirWarn").hidden = d.dir_ok;
+    $("#libDirWarn").textContent = d.dir_error ? "⚠ " + d.dir_error + ". In docker-compose.yml z. B. ./library:/library einhängen." : "";
+    const scan = d.last_error ? ` · ⚠ letzter Scan: ${d.last_error}` : d.last_scan ? ` · letzter Scan ${fmtDate(d.last_scan)}` : "";
+    $("#libInfo").textContent = `Ordner im Container: ${d.dir} · ${d.count} Song${d.count === 1 ? "" : "s"} übernommen${scan}`;
+    $("#libExport").disabled = !d.enabled;
+  }
+  async function loadLibrary() { try { renderLibrary(await api("library")); } catch { /* keine Rechte */ } }
+  [["libMode", "mode"], ["libLayout", "layout"], ["libServer", "server"]].forEach(([id, key]) => {
+    $("#" + id).addEventListener("click", (e) => {
+      const c = e.target.closest(".chip"); if (!c) return;
+      lib[key] = c.dataset.v; libChips(id, lib[key]); if (key === "server") renderLibServer();
+    });
+  });
+  $("#libEnabled").addEventListener("change", () => $(".lib-grid").classList.toggle("off", !$("#libEnabled").checked));
+  async function saveLibrary(quiet) {
+    const body = { enabled: $("#libEnabled").checked, ...lib, url: $("#libUrl").value.trim(), username: $("#libUser").value.trim() };
+    if ($("#libSecret").value) body.secret = $("#libSecret").value;
+    const d = await api("library", { method: "PUT", body });
+    renderLibrary(d);
+    if (!quiet) toast(d.enabled ? "Mediathek gespeichert" : "Mediathek ausgeschaltet", "success");
+    return d;
+  }
+  const libAction = (id, fn) => $("#" + id).addEventListener("click", async (e) => {
+    const b = e.currentTarget; b.classList.add("busy");
+    try { await fn(); } catch (err) { toast(err.message, "error"); }
+    b.classList.remove("busy");
+  });
+  libAction("libSave", () => saveLibrary(false));
+  libAction("libTest", async () => { await saveLibrary(true); toast((await api("library/test", { method: "POST" })).message, "success"); });
+  libAction("libScan", async () => { await saveLibrary(true); toast((await api("library/scan", { method: "POST" })).message, "success"); loadLibrary(); });
+  libAction("libExport", async () => {
+    await saveLibrary(true);
+    const r = await api("library/export", { method: "POST" });
+    toast(r.total ? `${r.exported} von ${r.total} Songs in die Mediathek übernommen` : "Keine passenden Songs gefunden", r.total ? "success" : undefined);
+    loadLibrary();
+  });
   $("#footStorage").addEventListener("click", () => { openModal("settings"); loadInfo(); loadStorage(); });
 
   async function loadInfo() {

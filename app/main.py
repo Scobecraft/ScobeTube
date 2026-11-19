@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from . import imgproxy, lyrics, tags
+from . import imgproxy, library, lyrics, tags
 from .legal import legal
 from . import appdist
 from .healer import healer
@@ -894,11 +894,83 @@ async def cancel(item_id: str, request: Request):
     return {"ok": True}
 
 
+# ---------------------------------------------------- mediathek
+def _to_library(item: Item, force: bool = False) -> bool:
+    """Übernimmt einen Download in die Mediathek (falls eingestellt). Läuft im Thread."""
+    if not (library.wanted(item) or (force and item.library)):
+        return False
+    try:
+        item.library = library.export(item, manager.file_path(item))
+        manager._update(item)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("Mediathek-Export von %s fehlgeschlagen: %s", item.id, e)
+        return False
+
+
+manager.on_done = _to_library
+
+
+@api.get("/library")
+async def library_get(request: Request):
+    _need(request, "admin")
+    data = await asyncio.to_thread(library.public)
+    data["count"] = sum(1 for i in manager.items.values() if i.library)
+    return data
+
+
+@api.put("/library")
+async def library_put(request: Request):
+    _need(request, "admin")
+    try:
+        data = await asyncio.to_thread(library.update, await _json(request))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    data["count"] = sum(1 for i in manager.items.values() if i.library)
+    return data
+
+
+@api.post("/library/test")
+async def library_test(request: Request):
+    _need(request, "admin")
+    try:
+        return {"message": await asyncio.to_thread(library.test)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Verbindung fehlgeschlagen: {e}") from e
+
+
+@api.post("/library/scan")
+async def library_scan(request: Request):
+    _need(request, "admin")
+    try:
+        return {"message": await asyncio.to_thread(library.rescan)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Scan fehlgeschlagen: {e}") from e
+
+
+@api.post("/library/export")
+async def library_export_all(request: Request):
+    _need(request, "admin")
+    if not library.settings()["enabled"]:
+        raise HTTPException(409, "Die Mediathek ist ausgeschaltet")
+    ok, err = await asyncio.to_thread(library.dir_status)
+    if not ok:
+        raise HTTPException(409, err)
+    todo = [i for i in list(manager.items.values()) if library.wanted(i)]
+    done = 0
+    for item in todo:
+        if await asyncio.to_thread(_to_library, item):
+            done += 1
+    return {"exported": done, "total": len(todo)}
+
+
 @api.post("/items/{item_id}/keep")
 async def keep(item_id: str, request: Request):
     _owned_item(_need(request, "keep"), item_id)
     data = await _json(request)
     item = manager.set_keep(item_id, bool(data.get("keep")))
+    if item and item.keep:
+        await asyncio.to_thread(_to_library, item)
     return item.public() if item else {}
 
 
@@ -1018,6 +1090,8 @@ async def embed_lyrics(item_id: str, request: Request):
         raise HTTPException(500, f"Songtext konnte nicht gespeichert werden: {e}") from e
     item.filesize = path.stat().st_size
     manager._update(item)
+    if item.library:
+        await asyncio.to_thread(_to_library, item, True)
     return {"ok": True, "synced": bool(res.get("synced"))}
 
 
@@ -1083,8 +1157,13 @@ async def set_meta(item_id: str, request: Request):
         item.uploader = artist
     if cover:
         item.thumbnail = f"api/items/{item.id}/cover?v={int(time.time())}"
+    if item.spotify is not None:   # eigene Angaben gehen vor (Songtext-Suche, Mediathek)
+        item.spotify = {**item.spotify, **({"title": title} if title else {}),
+                        **({"artists": [artist]} if artist else {}), **({"album": album} if album else {})}
     item.filesize = path.stat().st_size
     manager._update(item)
+    if item.library:
+        await asyncio.to_thread(_to_library, item, True)
     return item.public()
 
 

@@ -1230,3 +1230,16 @@ html.potato .lyr-line { transition: none; text-shadow: none; }
 .lyr-line.karaoke.now .w { color: rgba(243,240,231,.5); }
 .lyr-line.karaoke.now .w.sung { color: var(--accent); }
 .pl-mode.on:hover { color: var(--accent-ink); }
+
+/* ---------- Mediathek ---------- */
+.lib-sec { flex-direction: column; align-items: stretch; }
+.lib-sec .acts { flex-direction: row; flex-wrap: wrap; justify-content: flex-start; }
+.lib-grid { display: grid; gap: 12px; margin-top: 14px; }
+.lib-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 10px; }
+.lib-conn { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; animation: resIn .4s var(--ease) both; }
+.lib-conn[hidden], .lib-conn [hidden] { display: none; }
+.lib-conn .field:first-child, .lib-conn .legal-small { grid-column: 1 / -1; }
+.lib-conn .legal-small { margin: 0; }
+.lib-grid.off .lib-row, .lib-grid.off .lib-conn { opacity: .45; }
+.tag.lib:empty { display: none; }
+@media (max-width: 720px) { .lib-row { grid-template-columns: 1fr; gap: 6px; } .lib-conn { grid-template-columns: 1fr; } }

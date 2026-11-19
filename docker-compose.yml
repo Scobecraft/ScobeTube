@@ -10,6 +10,7 @@ services:
     volumes:
       - ./downloads:/downloads   # hier landen die Dateien
       - ./data:/data             # Warteschlange, Cookies, Cache
+      - ./library:/library       # Mediathek für Navidrome/Jellyfin/Plex (optional)
     environment:
       - PUID=1000
       - PGID=1000

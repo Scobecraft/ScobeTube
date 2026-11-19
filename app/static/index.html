@@ -240,6 +240,35 @@
         <div class="acts"><button class="btn" id="updateBtn"><span>Jetzt prüfen</span></button></div>
       </div>
 
+      <div class="section lib-sec" id="secLibrary" hidden>
+        <div class="txt"><h4>📚 Mediathek <span class="pill" id="libPill">aus</span></h4>
+          <p>Musik landet geordnet in einem eigenen Ordner, den <b>Navidrome</b>, <b>Jellyfin</b> oder <b>Plex</b> einliest. Dateien dort löscht die Auto-Löschung nicht. Danach stößt ScobeTube den Scan im Medienserver an.</p>
+          <p class="warn-box" id="libDirWarn" hidden></p>
+          <div class="lib-grid">
+            <label class="toggle"><input type="checkbox" id="libEnabled"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Mediathek einschalten</label>
+            <div class="lib-row"><span class="label">Was?</span>
+              <div class="chips" id="libMode"><button type="button" class="chip" data-v="pinned">📌 Nur behaltene Songs</button><button type="button" class="chip" data-v="audio">Alle Audio-Downloads</button></div></div>
+            <div class="lib-row"><span class="label">Ordner</span>
+              <div class="chips" id="libLayout"><button type="button" class="chip" data-v="artist_album">Interpret/Album/Titel</button><button type="button" class="chip" data-v="artist">Interpret/Titel</button><button type="button" class="chip" data-v="flat">Interpret - Titel</button></div></div>
+            <div class="lib-row"><span class="label">Server</span>
+              <div class="chips" id="libServer"><button type="button" class="chip" data-v="none">Keiner</button><button type="button" class="chip" data-v="navidrome">Navidrome</button><button type="button" class="chip" data-v="jellyfin">Jellyfin</button><button type="button" class="chip" data-v="plex">Plex</button></div></div>
+            <div class="lib-conn" id="libConn" hidden>
+              <label class="field"><span class="label">Adresse (vom ScobeTube-Container aus)</span><input class="input mono" id="libUrl" placeholder="http://navidrome:4533" autocomplete="off" spellcheck="false"></label>
+              <label class="field" id="libUserF"><span class="label">Benutzername</span><input class="input" id="libUser" autocomplete="off"></label>
+              <label class="field"><span class="label" id="libSecretL">Passwort</span><input class="input" id="libSecret" type="password" autocomplete="new-password"></label>
+              <p class="legal-small" id="libHint"></p>
+            </div>
+          </div>
+          <p class="legal-small" id="libInfo"></p>
+        </div>
+        <div class="acts">
+          <button class="btn small" id="libSave"><span>Speichern</span></button>
+          <button class="btn ghost small" id="libTest"><span>Verbindung testen</span></button>
+          <button class="btn ghost small" id="libExport"><span>Jetzt alle übernehmen</span></button>
+          <button class="btn ghost small" id="libScan"><span>Scan starten</span></button>
+        </div>
+      </div>
+
       <div class="section" id="secCookies" hidden>
         <div class="txt"><h4>Cookies <span class="pill" id="cookiePill">keine</span></h4><p>Bei „Sign in to confirm you're not a bot“ oder altersbeschränkten Videos: <code>cookies.txt</code> aus dem Browser exportieren und hochladen.</p></div>
         <div class="acts">
@@ -519,7 +548,7 @@
         <span class="dur"></span>
       </div>
       <div class="body">
-        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag chap"></span><span class="tag sb"></span><span class="tag kept"></span><span class="tag shared"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
+        <div class="tags"><span class="tag status"></span><span class="tag fmt"></span><span class="tag cut"></span><span class="tag chap"></span><span class="tag sb"></span><span class="tag kept"></span><span class="tag lib"></span><span class="tag shared"></span><span class="tag playlist"></span><span class="tag owner"></span></div>
         <h3 class="title"></h3>
         <div class="sub"></div>
         <div class="cells"></div>

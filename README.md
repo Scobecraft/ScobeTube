@@ -37,6 +37,7 @@ Basiert auf [yt-dlp](https://github.com/yt-dlp/yt-dlp) und unterstützt damit Yo
 - **Zwei-Faktor-Login:** Authenticator-App (TOTP) und/oder Passkeys (Google-Passwortmanager, Android, iPhone, Windows Hello, Sicherheitsschlüssel) sowie Wiederherstellungscodes
 - **Datenschutzfreundlich:** Schriften lokal, Vorschaubilder über den Server. Der Browser kontaktiert keine fremden Server, es gibt kein Tracking und nur ein technisch notwendiges Cookie.
 - **Rechtliches:** Seite mit Hinweis auf private Nutzung, Nutzungsbedingungen und Datenschutzhinweisen (`/rechtliches`); die Instanz ist für Suchmaschinen gesperrt. Als Admin bearbeitest du alle Texte, den Hinweis auf der Anmeldeseite und die Betreiberangaben direkt auf der Seite (✎ Bearbeiten, mit Live-Vorschau).
+- **📚 Mediathek für Navidrome, Jellyfin & Plex:** Behaltene (📌) oder alle Audio-Downloads landen geordnet als `Interpret/Album/Titel` im Ordner `/library`. Die Auto-Löschung fasst sie dort nicht an. Danach stößt ScobeTube automatisch den Scan im Medienserver an. Einstellbar als Admin unter Einstellungen → Mediathek (mit „Verbindung testen“ und „Jetzt alle übernehmen“). Tipp: Den gleichen Host-Ordner (`./library`) im Medienserver-Container als Musik-Ordner einhängen.
 - **Angemeldete Geräte:** Unter „Sicherheit & Geräte“ siehst du, wo du angemeldet bist (Browser, System, IP, zuletzt aktiv) und kannst einzelne oder alle anderen Geräte abmelden. Admins sehen die Geräte jedes Benutzers und können ihn überall abmelden.
 - **Notfall-Werkzeuge für Admins:** Passwort neu setzen (auch als Zufallspasswort), Authenticator-App entfernen, einzelne oder alle Passkeys löschen, Wiederherstellungscodes löschen oder den Zwei-Faktor-Login komplett zurücksetzen. Der Benutzer wird dabei überall abgemeldet.
 - Ein paar versteckte Easter Eggs 🥚
@@ -89,6 +90,7 @@ services:
 | `PLAYLIST_LIMIT` | `0` | Maximale Anzahl Videos pro Playlist (`0` = alle) |
 | `WINDOWS_FILENAMES` | `true` | Dateinamen Windows-/SMB-kompatibel machen |
 | `RETENTION_HOURS` | `10` | Dateien nach so vielen Stunden automatisch löschen (`0` = nie) |
+| `LIBRARY_DIR` | `/library` | Ordner der Mediathek (für Navidrome, Jellyfin, Plex) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | – | Optional: legt beim allerersten Start automatisch den Admin an (statt über die Einrichtungsseite) |
 | `OPERATOR_NAME` / `OPERATOR_CONTACT` | – | Optional: Betreiber und Kontakt auf der Seite „Rechtliches“ |
 | `WEBAUTHN_RP_ID` / `WEBAUTHN_ORIGIN` | automatisch | Nur nötig, wenn Passkeys hinter einem Proxy die Domain falsch erkennen (z. B. `tube.example.de` / `https://tube.example.de`) |

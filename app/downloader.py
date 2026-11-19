@@ -138,7 +138,8 @@ class Item:
     spotify: dict[str, Any] | None = None   # Metadaten von Spotify bzw. Tidal (Titel, Interpreten, Album, Cover …)
     match_url: str | None = None  # gefundener Song auf YouTube Music
     keep: bool = False            # 📌 von der Auto-Löschung ausnehmen
-    shared_with: list[str] = field(default_factory=list)   # Benutzernamen (klein), die den Download sehen dürfen
+    shared_with: list[str] = field(default_factory=list)
+    library: str | None = None    # Pfad in der Mediathek (relativ), falls dorthin übernommen   # Benutzernamen (klein), die den Download sehen dürfen
     chapter: dict[str, Any] | None = None   # gesetzt, wenn dies ein Kapitel eines größeren Downloads ist
 
     def public(self) -> dict[str, Any]:
@@ -158,6 +159,7 @@ class Item:
 class Manager:
     def __init__(self) -> None:
         self.items: dict[str, Item] = {}
+        self.on_done = None   # wird nach jedem fertigen Download aufgerufen (Mediathek)
         self.lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT, thread_name_prefix="dl")
         self.resolver = ThreadPoolExecutor(max_workers=4, thread_name_prefix="resolve")
@@ -561,6 +563,11 @@ class Manager:
             item.speed = item.eta = None
             item.finished = time.time()
             self._update(item)
+            if self.on_done:
+                try:
+                    self.on_done(item)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Nachbearbeitung fehlgeschlagen: %s", e)
         except DownloadCancelled:
             item.status = "cancelled"
             item.speed = item.eta = None
