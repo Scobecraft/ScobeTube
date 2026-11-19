@@ -123,6 +123,7 @@
           <label class="toggle"><input type="checkbox" id="optThumb" checked><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Cover &amp; Metadaten</label>
           <label class="toggle yt-only" title="Werbung, Eigenwerbung, Intros, Outros und „Abonnieren“-Erinnerungen aus YouTube-Videos herausschneiden (Daten von SponsorBlock)"><input type="checkbox" id="optSponsor"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>SponsorBlock</label>
           <label class="toggle" title="Videos mit Kapiteln (z. B. Mixe, Alben, Hörbücher) in einzelne Dateien zerlegen"><input type="checkbox" id="optChapters"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Kapitel aufteilen</label>
+          <label class="toggle audio-only" title="Songtext (wenn möglich zeitlich synchronisiert) von lrclib.net suchen und in die Audiodatei schreiben"><input type="checkbox" id="optLyrics"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Songtext einbetten</label>
           <label class="toggle"><input type="checkbox" id="optCut"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>✂ Zuschneiden</label>
           <label class="toggle video-only yt-only"><input type="checkbox" id="optSubs"><span class="box-t"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>Untertitel</label>
         </div>
@@ -455,6 +456,10 @@
           </div>
           <canvas id="plViz" width="600" height="160"></canvas>
         </div>
+        <div class="pl-lyrics" id="plLyrics" aria-live="off" hidden>
+          <div class="lyr-scroll" id="plLyrScroll"><div class="lyr-lines" id="plLyrLines"></div></div>
+          <div class="lyr-foot" id="plLyrFoot"></div>
+        </div>
         <video id="plVideo" playsinline hidden></video>
         <audio id="plAudio" hidden></audio>
       </div>
@@ -465,9 +470,12 @@
         <span class="mono" id="plDur">0:00</span>
       </div>
       <div class="pl-controls">
+        <button class="icon-btn pl-mode" id="plShuffle" aria-label="Zufällige Reihenfolge" title="Zufällige Reihenfolge (S)"><svg viewBox="0 0 24 24"><path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></svg></button>
         <button class="icon-btn" id="plPrev" aria-label="Vorheriger"><svg viewBox="0 0 24 24"><path d="M6 5v14M19 5 9 12l10 7z"/></svg></button>
         <button class="pl-play" id="plPlay" aria-label="Abspielen/Pause"><svg viewBox="0 0 24 24" id="plPlayIcon"><path d="M7 4.5v15l12-7.5z"/></svg></button>
         <button class="icon-btn" id="plNext" aria-label="Nächster"><svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg></button>
+        <button class="icon-btn pl-mode" id="plRepeat" aria-label="Wiederholen" title="Wiederholen: aus"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></svg><b class="rep-one">1</b></button>
+        <button class="icon-btn pl-mode" id="plLyrBtn" aria-label="Songtext" title="Songtext (L)"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM18.5 11v1a6.5 6.5 0 0 1-13 0v-1M12 18.5V21"/></svg></button>
         <label class="pl-vol"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9zM16.5 8.5a5 5 0 0 1 0 7"/></svg><input type="range" id="plVol" min="0" max="100" value="90" aria-label="Lautstärke"></label>
         <button class="icon-btn" id="plFull" aria-label="Vollbild" hidden><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
       </div>

@@ -242,7 +242,7 @@
     state.quality[curKind()] = b.dataset.v; store("quality", state.quality);
     $$("#qualityChips .chip").forEach((c) => c.classList.toggle("active", c === b)); restart(b, "pop");
   });
-  ["optPlaylist", "optThumb", "optSubs", "optSponsor", "optChapters"].forEach((id) => {
+  ["optPlaylist", "optThumb", "optSubs", "optSponsor", "optChapters", "optLyrics"].forEach((id) => {
     const key = id === "optPlaylist" ? "optPlaylist.v2" : id;
     const c = $("#" + id), saved = store(key);
     if (saved !== null) c.checked = saved;
@@ -292,6 +292,7 @@
       subtitles: kind === "video" && $("#optSubs").checked,
       sponsorblock: state.source === "all" && $("#optSponsor").checked,
       chapters: $("#optChapters").checked,
+      lyrics: state.kind === "audio" && $("#optLyrics").checked,
       ...($("#optCut").checked ? { start: $("#cutStart").value.trim(), end: $("#cutEnd").value.trim() } : {}),
     };
   }
@@ -1180,6 +1181,7 @@
     const modal = $("#playerModal"), audio = $("#plAudio"), video = $("#plVideo");
     const seek = $("#plSeek"), vol = $("#plVol"), canvas = $("#plViz"), cctx = canvas.getContext("2d");
     let queue = [], idx = 0, media = audio, actx = null, analyser = null, raf = null, seeking = false;
+    let order = [], pos = 0, shuffle = !!store("plShuffle"), repeat = store("plRepeat") || "off";
     const sources = new WeakMap();
     const setRange = (r) => r.style.setProperty("--p", (r.value / r.max * 100) + "%");
 
@@ -1221,8 +1223,182 @@
       }
       raf = requestAnimationFrame(draw);
     }
+    // ---- Reihenfolge (Shuffle) & Wiederholen
+    function buildOrder() {
+      order = queue.map((_, i) => i);
+      if (shuffle) {
+        order.splice(order.indexOf(idx), 1);
+        for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        order.unshift(idx);
+      }
+      pos = order.indexOf(idx);
+    }
+    function step(dir, auto) {
+      if (!queue.length) return;
+      if (auto && repeat === "one") { media.currentTime = 0; media.play(); return; }
+      let n = pos + dir;
+      if (n >= order.length) {
+        if (auto && repeat === "off") return;
+        if (shuffle) { const last = idx; buildOrder(); if (order.length > 1 && order[0] === last) order.push(order.shift()); }
+        n = 0;
+      } else if (n < 0) n = order.length - 1;
+      load(order[n]);
+    }
+    function renderModes() {
+      $("#plShuffle").classList.toggle("on", shuffle);
+      const rb = $("#plRepeat");
+      rb.classList.toggle("on", repeat !== "off"); rb.classList.toggle("one", repeat === "one");
+      rb.title = { off: "Wiederholen: aus (R)", all: "Wiederholen: alle (R)", one: "Wiederholen: dieser Song (R)" }[repeat];
+    }
+    $("#plShuffle").addEventListener("click", () => {
+      shuffle = !shuffle; store("plShuffle", shuffle); buildOrder(); renderModes();
+      toast(shuffle ? "Zufällige Reihenfolge an" : "Zufällige Reihenfolge aus");
+    });
+    $("#plRepeat").addEventListener("click", () => {
+      repeat = { off: "all", all: "one", one: "off" }[repeat]; store("plRepeat", repeat); renderModes();
+      toast({ off: "Wiederholen aus", all: "Alle wiederholen", one: "Diesen Song wiederholen" }[repeat]);
+    });
+    renderModes();
+
+    // ---- Sperrbildschirm / Kopfhörer-Tasten (Media Session)
+    const ms = "mediaSession" in navigator ? navigator.mediaSession : null;
+    const absUrl = (u) => { try { return new URL(u, location.href).href; } catch { return ""; } };
+    function sessionMeta(it) {
+      if (!ms || typeof MediaMetadata === "undefined") return;
+      const art = it.thumbnail ? [{ src: absUrl(it.thumbnail), sizes: "512x512" }] : [{ src: absUrl("static/icon-512.png"), sizes: "512x512", type: "image/png" }];
+      const sp = it.spotify || {};
+      try {
+        ms.metadata = new MediaMetadata({ title: sp.title || it.title || "ScobeTube", artist: (sp.artists || []).join(", ") || it.uploader || "",
+          album: sp.album || it.playlist || "ScobeTube", artwork: art });
+      } catch { /* älterer Browser */ }
+    }
+    let lastPos = 0;
+    function sessionPos(force) {
+      if (!ms || !ms.setPositionState || !media.duration || !isFinite(media.duration)) return;
+      const t = Date.now(); if (!force && t - lastPos < 1000) return; lastPos = t;
+      try { ms.setPositionState({ duration: media.duration, playbackRate: media.playbackRate || 1, position: Math.min(media.currentTime, media.duration) }); } catch { /* egal */ }
+    }
+    if (ms) {
+      const h = (a, f) => { try { ms.setActionHandler(a, f); } catch { /* nicht unterstützt */ } };
+      h("play", () => { if (media === audio) ensureAudioGraph(); media.play(); });
+      h("pause", () => media.pause());
+      h("previoustrack", () => { if (media.currentTime > 3) media.currentTime = 0; else step(-1); });
+      h("nexttrack", () => step(1));
+      h("seekbackward", (d) => { media.currentTime = Math.max(0, media.currentTime - (d.seekOffset || 10)); sessionPos(true); });
+      h("seekforward", (d) => { media.currentTime = Math.min(media.duration || 0, media.currentTime + (d.seekOffset || 10)); sessionPos(true); });
+      h("seekto", (d) => { if (d.fastSeek && media.fastSeek) media.fastSeek(d.seekTime); else media.currentTime = d.seekTime; sessionPos(true); });
+      h("stop", () => closeModal(modal));
+    }
+
+    // ---- Songtext (synchronisiert, von lrclib.net)
+    const lyrBox = $("#plLyrics"), lyrScroll = $("#plLyrScroll"), lyrLines = $("#plLyrLines"), lyrFoot = $("#plLyrFoot");
+    let lyrOn = !!store("plLyrics"), lyr = null, lyrFor = null, lyrIdx = -1, lyrRaf = null, userScroll = 0, lyrReq = 0;
+    function parseLrc(text) {
+      const out = [];
+      for (const raw of (text || "").split(/\r?\n/)) {
+        const m = raw.trim().match(/^((?:\[\d{1,3}:\d{1,2}(?:[.:]\d{1,3})?\])+)(.*)$/);
+        if (!m) continue;
+        for (const t of m[1].matchAll(/\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)) {
+          const words = [...m[2].matchAll(/<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)>([^<]*)/g)]
+            .map((w) => ({ t: +w[1] * 60 + parseFloat(w[2].replace(":", ".")), text: w[3] })).filter((w) => w.text.trim());
+          const text = words.length ? words.map((w) => w.text.trim()).join(" ") : m[2].trim();
+          out.push({ t: +t[1] * 60 + +t[2] + (t[3] ? +t[3] / 10 ** t[3].length : 0), text, words: words.length ? words : null });
+        }
+      }
+      return out.sort((a, b) => a.t - b.t);
+    }
+    function lyrMessage(title, sub) {
+      lyr = null; lyrLines.replaceChildren(); lyrScroll.classList.remove("lyr-plain");
+      const d = el("div", "lyr-msg"); d.append(el("b", "", title)); if (sub) d.append(el("span", "", sub));
+      lyrLines.append(d);
+    }
+    function lyrFooter(it, data) {
+      const parts = [];
+      if (data?.found && !data.instrumental) parts.push(el("span", "", `${data.synced ? "♪ Synchronisiert" : "Nicht synchronisiert"} · Quelle: LRCLIB`));
+      else parts.push(el("span", "", "Songtexte: lrclib.net"));
+      parts.push(el("span", "grow"));
+      if (data?.found && data.can_embed && !data.instrumental) {
+        const b = el("button", "btn ghost small", "In Datei speichern"); b.type = "button";
+        b.title = "Songtext in die Audiodatei schreiben – Navidrome, Jellyfin, Poweramp & Co. zeigen ihn dann mit an";
+        b.addEventListener("click", async () => {
+          b.classList.add("busy");
+          try { const r = await api(`items/${it.id}/lyrics/embed`, { method: "POST" }); toast(r.synced ? "Synchronisierter Songtext gespeichert" : "Songtext gespeichert", "success"); b.textContent = "✓ Gespeichert"; b.disabled = true; }
+          catch (err) { toast(err.message, "error"); }
+          b.classList.remove("busy");
+        });
+        parts.push(b);
+      }
+      const again = el("button", "btn ghost small", "Neu suchen"); again.type = "button";
+      again.addEventListener("click", () => loadLyrics(it, true));
+      parts.push(again);
+      lyrFoot.replaceChildren(...parts);
+    }
+    async function loadLyrics(it, refresh) {
+      lyrFor = it.id; lyrIdx = -1;
+      const req = ++lyrReq;
+      lyrMessage("Suche Songtext …", it.title);
+      lyrFoot.replaceChildren();
+      let data;
+      try { data = await api(`items/${it.id}/lyrics${refresh ? "?refresh=1" : ""}`); }
+      catch (err) { if (req === lyrReq) { lyrMessage("Gerade nicht erreichbar", err.message); lyrFooter(it, null); } return; }
+      if (req !== lyrReq) return;
+      lyrFooter(it, data);
+      if (!data.found) return lyrMessage("Kein Songtext gefunden", `Gesucht: ${[data.query?.artist, data.query?.title].filter(Boolean).join(" – ")}`);
+      if (data.instrumental) return lyrMessage("♪ Instrumental ♪", "Dieser Song hat keinen Text.");
+      const synced = parseLrc(data.synced);
+      if (synced.length) {
+        lyr = synced;
+        lyrScroll.classList.remove("lyr-plain");
+        lyrLines.replaceChildren(...synced.map((l) => {
+          const b = el("button", "lyr-line" + (l.text ? "" : " gap") + (l.words ? " karaoke" : ""), l.words ? "" : l.text || "♪ ♪ ♪"); b.type = "button";
+          if (l.words) l.words.forEach((w, k) => { if (k) b.append(" "); b.append(el("span", "w", w.text.trim())); });
+          b.addEventListener("click", () => { media.currentTime = l.t; userScroll = 0; if (media.paused) media.play(); });
+          return b;
+        }));
+        lyrScroll.scrollTop = 0;
+        syncLyrics(true);
+      } else {
+        lyrScroll.classList.add("lyr-plain");
+        lyrLines.replaceChildren(...data.plain.split(/\r?\n/).map((t) => el("div", "lyr-line", t || "\u00a0")));
+        lyrScroll.scrollTop = 0;
+      }
+    }
+    function syncLyrics(force) {
+      if (!lyr || !lyrOn) return;
+      const t = media.currentTime + 0.25;   // minimal früher, damit die Zeile mit dem Gesang „steht“
+      let lo = 0, hi = lyr.length - 1, i = -1;
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (lyr[mid].t <= t) { i = mid; lo = mid + 1; } else hi = mid - 1; }
+      const kids = lyrLines.children;
+      if (i >= 0 && lyr[i].words && kids[i]) {   // wortgenau mitleuchten
+        const ws = kids[i].children;
+        lyr[i].words.forEach((w, k) => ws[k] && ws[k].classList.toggle("sung", w.t <= t));
+      }
+      if (i === lyrIdx && !force) return;
+      for (let k = 0; k < kids.length; k++) { kids[k].classList.toggle("past", k < i); kids[k].classList.toggle("now", k === i); }
+      if (lyrIdx >= 0 && lyrIdx !== i && kids[lyrIdx]) for (const w of kids[lyrIdx].children) w.classList.remove("sung");
+      lyrIdx = i;
+      const cur = kids[Math.max(0, i)];
+      if (cur && Date.now() - userScroll > 3500) {
+        const top = cur.offsetTop - lyrScroll.clientHeight / 2 + cur.offsetHeight / 2;
+        lyrScroll.scrollTo({ top, behavior: motion.reduced || force ? "auto" : "smooth" });
+      }
+    }
+    function lyrLoop() { syncLyrics(); lyrRaf = requestAnimationFrame(lyrLoop); }
+    ["wheel", "touchmove"].forEach((ev) => lyrScroll.addEventListener(ev, () => { userScroll = Date.now(); }, { passive: true }));
+    function setLyrics(on) {
+      lyrOn = on; store("plLyrics", on);
+      lyrBox.hidden = !on; modal.classList.toggle("lyr", on); $("#plLyrBtn").classList.toggle("on", on);
+      cancelAnimationFrame(lyrRaf); lyrRaf = null;
+      if (!on || !queue[idx]) return;
+      if (lyrFor !== queue[idx].id) loadLyrics(queue[idx]);
+      else syncLyrics(true);
+      if (!potato()) lyrLoop();
+    }
+    $("#plLyrBtn").addEventListener("click", () => setLyrics(!lyrOn));
+
     function load(i) {
       idx = (i + queue.length) % queue.length;
+      if (order.length !== queue.length) buildOrder(); else pos = order.indexOf(idx);
       const it = queue[idx];
       const isVideo = it.options.kind === "video";
       modal.classList.toggle("video", isVideo);
@@ -1242,17 +1418,24 @@
       $("#plFormat").textContent = (it.options.format || "").toUpperCase() + (it.filesize ? " · " + fmtBytes(it.filesize) : "");
       seek.value = 0; setRange(seek); $("#plCur").textContent = "0:00"; $("#plDur").textContent = fmtTime(it.duration) || "0:00";
       if (!isVideo) ensureAudioGraph();
+      sessionMeta(it);
+      lyrFor = null; lyr = null;
+      if (lyrOn) setLyrics(true);
       media.play().catch((err) => { if (err.name === "NotSupportedError") toast("Dieses Format kann dein Browser nicht abspielen", "error"); });
     }
     function bind(m) {
-      m.addEventListener("play", () => { modal.classList.add("playing"); $("#plPlayIcon").innerHTML = '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>'; });
-      m.addEventListener("pause", () => { modal.classList.remove("playing"); $("#plPlayIcon").innerHTML = '<path d="M7 4.5v15l12-7.5z"/>'; });
+      m.addEventListener("play", () => { if (ms) ms.playbackState = "playing"; modal.classList.add("playing"); $("#plPlayIcon").innerHTML = '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>'; });
+      m.addEventListener("pause", () => { if (ms && m === media) ms.playbackState = "paused"; modal.classList.remove("playing"); $("#plPlayIcon").innerHTML = '<path d="M7 4.5v15l12-7.5z"/>'; });
       m.addEventListener("timeupdate", () => {
         if (m !== media || seeking || !m.duration) return;
         seek.value = Math.round(m.currentTime / m.duration * 1000); setRange(seek);
         $("#plCur").textContent = fmtTime(m.currentTime); $("#plDur").textContent = fmtTime(m.duration);
+        sessionPos();
+        if (potato()) syncLyrics();
       });
-      m.addEventListener("ended", () => { if (m === media && queue.length > 1 && idx < queue.length - 1) load(idx + 1); });
+      m.addEventListener("seeked", () => { if (m === media) { sessionPos(true); syncLyrics(true); } });
+      m.addEventListener("loadedmetadata", () => { if (m === media) sessionPos(true); });
+      m.addEventListener("ended", () => { if (m === media) step(1, true); });
       m.addEventListener("error", () => { if (m === media && m.getAttribute("src")) toast("Abspielen nicht möglich (Format oder Datei fehlt)", "error"); });
     }
     bind(audio); bind(video);
@@ -1260,8 +1443,8 @@
     seek.addEventListener("change", () => { if (media.duration) media.currentTime = seek.value / 1000 * media.duration; seeking = false; });
     vol.addEventListener("input", () => { media.volume = vol.value / 100; setRange(vol); store("volume", vol.value); });
     $("#plPlay").addEventListener("click", () => { if (media.paused) { if (media === audio) ensureAudioGraph(); media.play(); } else media.pause(); });
-    $("#plPrev").addEventListener("click", () => { if (media.currentTime > 3) media.currentTime = 0; else load(idx - 1); });
-    $("#plNext").addEventListener("click", () => load(idx + 1));
+    $("#plPrev").addEventListener("click", () => { if (media.currentTime > 3) media.currentTime = 0; else step(-1); });
+    $("#plNext").addEventListener("click", () => step(1));
     $("#plFull").addEventListener("click", () => video.requestFullscreen && video.requestFullscreen());
     video.addEventListener("click", () => (video.paused ? video.play() : video.pause()));
     addEventListener("keydown", (e) => {
@@ -1269,7 +1452,10 @@
       if (e.key === " ") { e.preventDefault(); $("#plPlay").click(); }
       else if (e.key === "ArrowRight") media.currentTime = Math.min(media.duration || 0, media.currentTime + 10);
       else if (e.key === "ArrowLeft") media.currentTime = Math.max(0, media.currentTime - 10);
-      else if (e.key === "n") load(idx + 1);
+      else if (e.key === "n") step(1);
+      else if (e.key === "l" || e.key === "L") setLyrics(!lyrOn);
+      else if (e.key === "s") $("#plShuffle").click();
+      else if (e.key === "r") $("#plRepeat").click();
     });
     const savedVol = store("volume"); if (savedVol != null) vol.value = savedVol; setRange(vol);
 
@@ -1279,6 +1465,7 @@
         const i = queue.findIndex((q) => q.id === id);
         if (i < 0) return;
         openModal("playerModal");
+        idx = i; buildOrder();
         load(i);
         if (!raf && !potato()) draw();
       },
@@ -1286,6 +1473,8 @@
         audio.pause(); video.pause();
         audio.removeAttribute("src"); video.removeAttribute("src"); audio.load(); video.load();
         cancelAnimationFrame(raf); raf = null;
+        cancelAnimationFrame(lyrRaf); lyrRaf = null; lyrReq++;
+        if (ms) { ms.metadata = null; ms.playbackState = "none"; }
         if (document.fullscreenElement) document.exitFullscreen();
       },
     };

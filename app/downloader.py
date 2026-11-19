@@ -42,6 +42,7 @@ class Options:
     thumbnail: bool = True
     sponsorblock: bool = False   # Werbung/Intros aus YouTube-Videos herausschneiden
     chapters: bool = False       # anhand der Kapitel in einzelne Dateien aufteilen
+    lyrics: bool = False         # Songtext (wenn möglich synchronisiert) in die Audiodatei schreiben
     start: float | None = None   # Zuschnitt in Sekunden
     end: float | None = None
 
@@ -70,6 +71,7 @@ class Options:
             thumbnail=bool(data.get("thumbnail", True)),
             sponsorblock=bool(data.get("sponsorblock", False)),
             chapters=bool(data.get("chapters", False)),
+            lyrics=kind == "audio" and bool(data.get("lyrics", False)),
             **_parse_cut(data.get("start"), data.get("end")),
         )
 
@@ -545,6 +547,14 @@ class Manager:
             if splitter and splitter.files:
                 self._finish_chapters(item, splitter.files, info or {})
                 return
+            if item.options.lyrics and path and item.options.kind == "audio":
+                from . import lyrics
+                p = Path(path)
+                if p.is_file() and tags.supported(p):
+                    item.note = "Songtext wird gesucht …"
+                    self._update(item)
+                    item.note = None if lyrics.auto_embed(item, p) else "Kein Songtext gefunden"
+                    item.filesize = p.stat().st_size
             item.status = "done"
             self._count(item)
             item.progress = 100

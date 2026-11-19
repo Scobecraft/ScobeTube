@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from . import imgproxy, tags
+from . import imgproxy, lyrics, tags
 from .legal import legal
 from . import appdist
 from .healer import healer
@@ -987,6 +987,38 @@ def _editable_audio(request: Request, item_id: str) -> tuple[Item, Path]:
     if item.options.kind != "audio" or not tags.supported(path):
         raise HTTPException(400, "Tags lassen sich nur bei Audiodateien (MP3, M4A, FLAC, Opus, WAV) bearbeiten")
     return item, path
+
+
+@api.get("/items/{item_id}/lyrics")
+async def get_lyrics(item_id: str, request: Request, refresh: bool = False):
+    user = _user(request)
+    item = _item_for(user, item_id)
+    path = manager.file_path(item)
+    try:
+        res = await asyncio.to_thread(lyrics.get, item, path, refresh)
+    except Exception as e:  # noqa: BLE001
+        log.info("Lyrics-Abfrage fehlgeschlagen: %s", e)
+        raise HTTPException(502, "Songtext-Dienst (lrclib.net) gerade nicht erreichbar") from e
+    res["can_embed"] = bool(item.options.kind == "audio" and path and path.is_file() and tags.supported(path)
+                            and _owned(user)(item) and user.has("download"))
+    res.pop("at", None)
+    return res
+
+
+@api.post("/items/{item_id}/lyrics/embed")
+async def embed_lyrics(item_id: str, request: Request):
+    item, path = _editable_audio(request, item_id)
+    res = await asyncio.to_thread(lyrics.get, item, path)
+    text = res.get("synced") or res.get("plain")
+    if not text:
+        raise HTTPException(404, "Für diesen Song wurde kein Songtext gefunden")
+    try:
+        await asyncio.to_thread(lyrics.embed, path, text)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"Songtext konnte nicht gespeichert werden: {e}") from e
+    item.filesize = path.stat().st_size
+    manager._update(item)
+    return {"ok": True, "synced": bool(res.get("synced"))}
 
 
 @api.get("/items/{item_id}/meta")
